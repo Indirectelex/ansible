@@ -151,6 +151,9 @@
         | length
       }}
 
+- name: Apply failed-service allowlist
+  ansible.builtin.include_tasks: service_allowlist.yml
+
 - name: Determine overall health status
   ansible.builtin.set_fact:
     health_check_overall_status: >-
@@ -209,6 +212,9 @@
 
 - name: Evaluate swap and load thresholds
   ansible.builtin.include_tasks: resource_thresholds.yml
+
+- name: Evaluate service and time policies
+  ansible.builtin.include_tasks: policy_checks.yml
 
 - name: Ensure report directory exists on Hackwell
   ansible.builtin.file:

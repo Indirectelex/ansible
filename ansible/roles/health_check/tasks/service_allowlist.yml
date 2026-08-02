@@ -1,0 +1,41 @@
+---
+- name: Initialize classified failed-service lists
+  ansible.builtin.set_fact:
+    health_check_effective_failed_services: []
+    health_check_ignored_failed_services: []
+
+- name: Classify failed systemd services
+  ansible.builtin.set_fact:
+    health_check_effective_failed_services: >-
+      {{
+        health_check_effective_failed_services
+        + (
+            [health_check_failed_service_line]
+            if health_check_service_name
+              not in health_check_failed_service_allowlist
+            else []
+          )
+      }}
+    health_check_ignored_failed_services: >-
+      {{
+        health_check_ignored_failed_services
+        + (
+            [health_check_failed_service_line]
+            if health_check_service_name
+              in health_check_failed_service_allowlist
+            else []
+          )
+      }}
+  vars:
+    health_check_service_name: >-
+      {{ health_check_failed_service_line.split()[0] }}
+  loop: "{{ health_check_failed_services.stdout_lines }}"
+  loop_control:
+    loop_var: health_check_failed_service_line
+    label: "{{ health_check_failed_service_line }}"
+  when: health_check_failed_service_line | trim | length > 0
+
+- name: Apply effective failed-service count
+  ansible.builtin.set_fact:
+    health_check_failed_service_count: >-
+      {{ health_check_effective_failed_services | length }}

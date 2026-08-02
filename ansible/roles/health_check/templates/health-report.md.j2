@@ -9,6 +9,9 @@ Status: **{{ health_check_report.status }}**
 - Operating system: {{ health_check_report.operating_system }}
 - Kernel: {{ health_check_report.kernel }}
 - Uptime: {{ health_check_report.uptime_days }} days
+- CPU count: {{ health_check_report.cpu_count }}
+- One-minute load: {{ health_check_report.load_one }}
+- Load per CPU: {{ health_check_report.load_per_cpu }}
 - Root filesystem: {{ health_check_report.root_disk_percent }}%
 - Root inode usage: {{ health_check_report.root_inode_percent }}%
 - Memory usage: {{ health_check_report.memory_percent }}%
@@ -16,9 +19,8 @@ Status: **{{ health_check_report.status }}**
 - Updates available: {{ health_check_report.updates_available }}
 - Reboot required: {{ health_check_report.reboot_required }}
 - Time synchronized: {{ health_check_report.time_synchronized }}
-- CPU count: {{ health_check_report.cpu_count }}
-- One-minute load: {{ health_check_report.load_one }}
-- Load per CPU: {{ health_check_report.load_per_cpu }}
+- Time synchronization required: {{ health_check_report.time_sync_required }}
+- Time synchronization check return code: {{ health_check_report.time_sync_check_rc }}
 
 ## Failed services
 
@@ -28,6 +30,14 @@ Status: **{{ health_check_report.status }}**
 ```
 {% else %}
 None.
+{% endif %}
+
+{% if health_check_report.ignored_failed_services | length > 0 %}
+Ignored failed services:
+
+```text
+{{ health_check_report.ignored_failed_services | join('\n') }}
+```
 {% endif %}
 
 ## Filesystem
