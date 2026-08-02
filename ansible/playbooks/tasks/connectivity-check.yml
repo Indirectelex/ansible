@@ -1,0 +1,80 @@
+---
+- name: Ensure report directory exists on Hackwell
+  ansible.builtin.file:
+    path: "{{ health_check_report_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  changed_when: false
+
+- name: Test Ansible connection
+  ansible.builtin.wait_for_connection:
+    connect_timeout: 5
+    sleep: 1
+    timeout: 15
+  register: health_check_connection
+  changed_when: false
+  failed_when: false
+  ignore_unreachable: true
+
+- name: Determine connection state
+  ansible.builtin.set_fact:
+    health_check_connection_failed: >-
+      {{
+        (
+          health_check_connection.unreachable
+          | default(false)
+          | bool
+        )
+        or health_check_connection.msg is defined
+      }}
+
+- name: Write unreachable JSON report
+  ansible.builtin.copy:
+    content: >-
+      {{
+        {
+          'generated_at': lookup('pipe', 'date --iso-8601=seconds'),
+          'host': inventory_hostname,
+          'status': 'UNREACHABLE',
+          'message':
+            health_check_connection.msg
+            | default('Connection test failed')
+        } | to_nice_json
+      }}
+    dest: "{{ health_check_report_dir }}/{{ inventory_hostname }}.json"
+    mode: "0640"
+  delegate_to: localhost
+  become: false
+  when: health_check_connection_failed | bool
+  changed_when: false
+
+- name: Write unreachable Markdown report
+  ansible.builtin.copy:
+    content: |
+      # Health report: {{ inventory_hostname }}
+
+      Generated: {{ lookup('pipe', 'date --iso-8601=seconds') }}
+
+      Status: **UNREACHABLE**
+
+      Ansible could not connect to this host.
+
+      ```text
+      {{ health_check_connection.msg | default('Connection test failed') }}
+      ```
+    dest: "{{ health_check_report_dir }}/{{ inventory_hostname }}.md"
+    mode: "0640"
+  delegate_to: localhost
+  become: false
+  when: health_check_connection_failed | bool
+  changed_when: false
+
+- name: Stop processing unreachable host
+  ansible.builtin.meta: end_host
+  when: health_check_connection_failed | bool
+
+- name: Gather system facts
+  ansible.builtin.setup:

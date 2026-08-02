@@ -2,7 +2,14 @@
 - name: Check Linux system health
   hosts: monitoring_enabled
   become: true
-  gather_facts: true
+  gather_facts: false
+
+  vars:
+    health_check_report_dir: "{{ playbook_dir }}/../reports"
+
+  pre_tasks:
+    - name: Run connectivity preflight
+      ansible.builtin.import_tasks: tasks/connectivity-check.yml
 
   roles:
     - role: health_check
