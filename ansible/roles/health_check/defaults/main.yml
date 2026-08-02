@@ -8,4 +8,10 @@ health_check_inode_critical_percent: 90
 health_check_memory_warning_percent: 80
 health_check_memory_critical_percent: 90
 
+health_check_swap_warning_percent: 50
+health_check_swap_critical_percent: 80
+
+health_check_load_warning_per_cpu: 1.0
+health_check_load_critical_per_cpu: 2.0
+
 health_check_report_dir: "{{ playbook_dir }}/../reports"

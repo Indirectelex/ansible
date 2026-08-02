@@ -12,9 +12,13 @@ Status: **{{ health_check_report.status }}**
 - Root filesystem: {{ health_check_report.root_disk_percent }}%
 - Root inode usage: {{ health_check_report.root_inode_percent }}%
 - Memory usage: {{ health_check_report.memory_percent }}%
+- Swap usage: {{ health_check_report.swap_percent }}%
 - Updates available: {{ health_check_report.updates_available }}
 - Reboot required: {{ health_check_report.reboot_required }}
 - Time synchronized: {{ health_check_report.time_synchronized }}
+- CPU count: {{ health_check_report.cpu_count }}
+- One-minute load: {{ health_check_report.load_one }}
+- Load per CPU: {{ health_check_report.load_per_cpu }}
 
 ## Failed services
 

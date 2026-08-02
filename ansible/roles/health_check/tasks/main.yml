@@ -207,6 +207,9 @@
       proxmox_storage: >-
         {{ health_check_proxmox_storage.stdout | default('Not applicable') }}
 
+- name: Evaluate swap and load thresholds
+  ansible.builtin.include_tasks: resource_thresholds.yml
+
 - name: Ensure report directory exists on Hackwell
   ansible.builtin.file:
     path: "{{ health_check_report_dir }}"

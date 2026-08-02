@@ -1,0 +1,76 @@
+---
+- name: Calculate swap and load metrics
+  ansible.builtin.set_fact:
+    health_check_swap_percent: >-
+      {{
+        (
+          ansible_facts.memory_mb.swap.used
+          | float
+          / ansible_facts.memory_mb.swap.total
+          | float
+          * 100
+        ) | round(1)
+        if ansible_facts.memory_mb.swap.total | int > 0
+        else 0.0
+      }}
+    health_check_cpu_count: >-
+      {{
+        ansible_facts.get(
+          'processor_vcpus',
+          ansible_facts.get('processor_nproc', 1)
+        ) | int
+      }}
+    health_check_load_one: >-
+      {{
+        ansible_facts.get('loadavg', {}).get('1m', 0.0)
+        | float
+      }}
+
+- name: Calculate normalized system load
+  ansible.builtin.set_fact:
+    health_check_load_per_cpu: >-
+      {{
+        (
+          health_check_load_one | float
+          / (health_check_cpu_count | int)
+        ) | round(2)
+      }}
+
+- name: Apply swap and load thresholds
+  ansible.builtin.set_fact:
+    health_check_overall_status: >-
+      {{
+        'CRITICAL'
+        if (
+          (health_check_swap_percent | float)
+            >= (health_check_swap_critical_percent | float)
+          or
+          (health_check_load_per_cpu | float)
+            >= (health_check_load_critical_per_cpu | float)
+        )
+        else 'WARNING'
+        if (
+          (health_check_swap_percent | float)
+            >= (health_check_swap_warning_percent | float)
+          or
+          (health_check_load_per_cpu | float)
+            >= (health_check_load_warning_per_cpu | float)
+        )
+        else health_check_overall_status
+      }}
+
+- name: Add swap and load metrics to structured report
+  ansible.builtin.set_fact:
+    health_check_report: >-
+      {{
+        health_check_report
+        | combine(
+            {
+              'status': health_check_overall_status,
+              'swap_percent': health_check_swap_percent,
+              'cpu_count': health_check_cpu_count,
+              'load_one': health_check_load_one,
+              'load_per_cpu': health_check_load_per_cpu
+            }
+          )
+      }}
