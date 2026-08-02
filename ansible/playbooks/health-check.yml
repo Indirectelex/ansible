@@ -1,0 +1,8 @@
+---
+- name: Check Linux system health
+  hosts: monitoring_enabled
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: health_check

@@ -1,0 +1,68 @@
+# Health report: {{ inventory_hostname }}
+
+Generated: {{ health_report.generated_at }}  
+Status: **{{ health_report.status }}**
+
+## System
+
+- Operating system: {{ health_report.operating_system }}
+- Kernel: {{ health_report.kernel }}
+- Uptime: {{ health_report.uptime_days }} days
+- Root filesystem: {{ health_report.root_disk_percent }}%
+- Root inode usage: {{ health_report.root_inode_percent }}%
+- Memory usage: {{ health_report.memory_percent }}%
+- Updates available: {{ health_report.updates_available }}
+- Reboot required: {{ health_report.reboot_required }}
+- Time synchronized: {{ health_report.time_synchronized }}
+
+## Failed services
+
+{% if health_report.failed_service_count | int > 0 %}
+```text
+{{ health_report.failed_services | join('\n') }}
+```
+{% else %}
+None.
+{% endif %}
+
+## Filesystem
+
+```text
+{{ health_report.disk_details }}
+```
+
+## Memory
+
+```text
+{{ health_report.memory_details }}
+```
+
+## Uptime and load
+
+```text
+{{ health_report.uptime_details }}
+```
+
+{% if health_report.docker_applicable | bool %}
+## Docker containers
+
+```text
+{{ health_report.docker_containers }}
+```
+{% endif %}
+
+{% if health_report.proxmox_applicable | bool %}
+## Proxmox
+
+Version:
+
+```text
+{{ health_report.proxmox_version }}
+```
+
+Storage:
+
+```text
+{{ health_report.proxmox_storage }}
+```
+{% endif %}

@@ -18,3 +18,6 @@ __pycache__/
 # Local secrets and private keys
 *.pem
 *.key
+
+ansible/reports/*
+!ansible/reports/.gitkeep

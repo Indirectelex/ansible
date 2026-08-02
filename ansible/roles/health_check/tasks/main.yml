@@ -1,0 +1,247 @@
+---
+- name: Collect root filesystem usage
+  ansible.builtin.command:
+    argv:
+      - df
+      - -P
+      - /
+  register: health_disk
+  changed_when: false
+
+- name: Collect root filesystem inode usage
+  ansible.builtin.command:
+    argv:
+      - df
+      - -Pi
+      - /
+  register: health_inodes
+  changed_when: false
+
+- name: Collect readable memory information
+  ansible.builtin.command:
+    argv:
+      - free
+      - -h
+  register: health_memory
+  changed_when: false
+
+- name: Collect system uptime and load
+  ansible.builtin.command:
+    argv:
+      - uptime
+  register: health_uptime
+  changed_when: false
+
+- name: Collect failed systemd services
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - --failed
+      - --no-legend
+      - --plain
+  register: health_failed_services
+  changed_when: false
+  failed_when: false
+
+- name: Check whether a reboot is required
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: health_reboot_required
+
+- name: Check time synchronization
+  ansible.builtin.command:
+    argv:
+      - timedatectl
+      - show
+      - --property=NTPSynchronized
+      - --value
+  register: health_time_sync
+  changed_when: false
+  failed_when: false
+
+- name: Simulate available package upgrades
+  ansible.builtin.command:
+    argv:
+      - apt-get
+      - --simulate
+      - --no-download
+      - upgrade
+  environment:
+    LC_ALL: C
+  register: health_apt
+  changed_when: false
+  failed_when: false
+
+- name: Collect Docker information
+  ansible.builtin.command:
+    argv:
+      - docker
+      - info
+  register: health_docker_info
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname in groups.get('docker_hosts', [])
+
+- name: Collect Docker container state
+  ansible.builtin.command:
+    argv:
+      - docker
+      - ps
+      - --all
+  register: health_docker_containers
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname in groups.get('docker_hosts', [])
+
+- name: Collect Proxmox version
+  ansible.builtin.command:
+    argv:
+      - pveversion
+  register: health_proxmox_version
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname in groups.get('proxmox_hosts', [])
+
+- name: Collect Proxmox storage status
+  ansible.builtin.command:
+    argv:
+      - pvesm
+      - status
+  register: health_proxmox_storage
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname in groups.get('proxmox_hosts', [])
+
+- name: Calculate health metrics
+  ansible.builtin.set_fact:
+    health_disk_percent: >-
+      {{
+        health_disk.stdout_lines[-1].split()[4]
+        | replace('%', '')
+        | int
+      }}
+    health_inode_percent: >-
+      {{
+        health_inodes.stdout_lines[-1].split()[4]
+        | replace('%', '')
+        | int
+      }}
+    health_memory_percent: >-
+      {{
+        (
+          ansible_facts.memory_mb.real.used
+          | float
+          / ansible_facts.memory_mb.real.total
+          | float
+          * 100
+        ) | round(1)
+      }}
+    health_failed_service_count: >-
+      {{
+        health_failed_services.stdout_lines
+        | reject('equalto', '')
+        | list
+        | length
+      }}
+    health_update_count: >-
+      {{
+        health_apt.stdout_lines
+        | select('match', '^Inst ')
+        | list
+        | length
+      }}
+
+- name: Determine overall health status
+  ansible.builtin.set_fact:
+    health_overall_status: >-
+      {{
+        'CRITICAL'
+        if (
+          health_disk_percent | int >= health_disk_critical_percent
+          or health_inode_percent | int >= health_inode_critical_percent
+          or health_memory_percent | float >= health_memory_critical_percent
+        )
+        else 'WARNING'
+        if (
+          health_disk_percent | int >= health_disk_warning_percent
+          or health_inode_percent | int >= health_inode_warning_percent
+          or health_memory_percent | float >= health_memory_warning_percent
+          or health_failed_service_count | int > 0
+          or health_update_count | int > 0
+          or health_reboot_required.stat.exists
+        )
+        else 'OK'
+      }}
+
+- name: Assemble structured health report
+  ansible.builtin.set_fact:
+    health_report:
+      generated_at: "{{ lookup('pipe', 'date --iso-8601=seconds') }}"
+      host: "{{ inventory_hostname }}"
+      status: "{{ health_overall_status }}"
+      operating_system: >-
+        {{ ansible_facts.distribution }}
+        {{ ansible_facts.distribution_version }}
+      kernel: "{{ ansible_facts.kernel }}"
+      uptime_days: >-
+        {{ (ansible_facts.uptime_seconds | int / 86400) | round(1) }}
+      root_disk_percent: "{{ health_disk_percent }}"
+      root_inode_percent: "{{ health_inode_percent }}"
+      memory_percent: "{{ health_memory_percent }}"
+      failed_service_count: "{{ health_failed_service_count }}"
+      failed_services: "{{ health_failed_services.stdout_lines }}"
+      updates_available: "{{ health_update_count }}"
+      reboot_required: "{{ health_reboot_required.stat.exists }}"
+      time_synchronized: "{{ health_time_sync.stdout | default('unknown') }}"
+      disk_details: "{{ health_disk.stdout }}"
+      memory_details: "{{ health_memory.stdout }}"
+      uptime_details: "{{ health_uptime.stdout }}"
+      docker_applicable: >-
+        {{ inventory_hostname in groups.get('docker_hosts', []) }}
+      docker_containers: >-
+        {{ health_docker_containers.stdout | default('Not applicable') }}
+      proxmox_applicable: >-
+        {{ inventory_hostname in groups.get('proxmox_hosts', []) }}
+      proxmox_version: >-
+        {{ health_proxmox_version.stdout | default('Not applicable') }}
+      proxmox_storage: >-
+        {{ health_proxmox_storage.stdout | default('Not applicable') }}
+
+- name: Ensure report directory exists on Hackwell
+  ansible.builtin.file:
+    path: "{{ health_report_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  changed_when: false
+
+- name: Write JSON report on Hackwell
+  ansible.builtin.copy:
+    content: "{{ health_report | to_nice_json }}\n"
+    dest: "{{ health_report_dir }}/{{ inventory_hostname }}.json"
+    mode: "0640"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Write Markdown report on Hackwell
+  ansible.builtin.template:
+    src: health-report.md.j2
+    dest: "{{ health_report_dir }}/{{ inventory_hostname }}.md"
+    mode: "0640"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Display health summary
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ health_overall_status }}
+      | Disk {{ health_disk_percent }}%
+      | Inodes {{ health_inode_percent }}%
+      | Memory {{ health_memory_percent }}%
+      | Failed services {{ health_failed_service_count }}
+      | Updates {{ health_update_count }}
+      | Reboot {{ health_reboot_required.stat.exists }}

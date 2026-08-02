@@ -1,0 +1,11 @@
+---
+health_disk_warning_percent: 80
+health_disk_critical_percent: 90
+
+health_inode_warning_percent: 80
+health_inode_critical_percent: 90
+
+health_memory_warning_percent: 80
+health_memory_critical_percent: 90
+
+health_report_dir: "{{ playbook_dir }}/../reports"
