@@ -64,7 +64,6 @@
     argv:
       - apt-get
       - --simulate
-      - --no-download
       - upgrade
   environment:
     LC_ALL: C
@@ -215,6 +214,9 @@
 
 - name: Evaluate service and time policies
   ansible.builtin.include_tasks: policy_checks.yml
+
+- name: Evaluate collection policies
+  ansible.builtin.include_tasks: collection_policy.yml
 
 - name: Ensure report directory exists on Hackwell
   ansible.builtin.file:

@@ -17,6 +17,8 @@ Status: **{{ health_check_report.status }}**
 - Memory usage: {{ health_check_report.memory_percent }}%
 - Swap usage: {{ health_check_report.swap_percent }}%
 - Updates available: {{ health_check_report.updates_available }}
+- APT check return code: {{ health_check_report.apt_check_rc }}
+- APT collection failed: {{ health_check_report.apt_collection_failed }}
 - Reboot required: {{ health_check_report.reboot_required }}
 - Time synchronized: {{ health_check_report.time_synchronized }}
 - Time synchronization required: {{ health_check_report.time_sync_required }}
@@ -61,6 +63,10 @@ Ignored failed services:
 {% if health_check_report.docker_applicable | bool %}
 ## Docker containers
 
+- Docker check return code: {{ health_check_report.docker_check_rc }}
+- Container query return code: {{ health_check_report.docker_container_check_rc }}
+- Docker collection failed: {{ health_check_report.docker_collection_failed }}
+
 ```text
 {{ health_check_report.docker_containers }}
 ```
@@ -68,6 +74,18 @@ Ignored failed services:
 
 {% if health_check_report.proxmox_applicable | bool %}
 ## Proxmox
+
+- Version check return code: {{ health_check_report.proxmox_version_check_rc }}
+- Storage check return code: {{ health_check_report.proxmox_storage_check_rc }}
+- Proxmox collection failed: {{ health_check_report.proxmox_collection_failed }}
+
+{% if health_check_report.proxmox_inactive_storage | length > 0 %}
+Inactive storage:
+
+```text
+{{ health_check_report.proxmox_inactive_storage | join('\n') }}
+```
+{% endif %}
 
 Version:
 
