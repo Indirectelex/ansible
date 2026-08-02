@@ -1,25 +1,26 @@
 # Health report: {{ inventory_hostname }}
 
-Generated: {{ health_report.generated_at }}  
-Status: **{{ health_report.status }}**
+Generated: {{ health_check_report.generated_at }}
+
+Status: **{{ health_check_report.status }}**
 
 ## System
 
-- Operating system: {{ health_report.operating_system }}
-- Kernel: {{ health_report.kernel }}
-- Uptime: {{ health_report.uptime_days }} days
-- Root filesystem: {{ health_report.root_disk_percent }}%
-- Root inode usage: {{ health_report.root_inode_percent }}%
-- Memory usage: {{ health_report.memory_percent }}%
-- Updates available: {{ health_report.updates_available }}
-- Reboot required: {{ health_report.reboot_required }}
-- Time synchronized: {{ health_report.time_synchronized }}
+- Operating system: {{ health_check_report.operating_system }}
+- Kernel: {{ health_check_report.kernel }}
+- Uptime: {{ health_check_report.uptime_days }} days
+- Root filesystem: {{ health_check_report.root_disk_percent }}%
+- Root inode usage: {{ health_check_report.root_inode_percent }}%
+- Memory usage: {{ health_check_report.memory_percent }}%
+- Updates available: {{ health_check_report.updates_available }}
+- Reboot required: {{ health_check_report.reboot_required }}
+- Time synchronized: {{ health_check_report.time_synchronized }}
 
 ## Failed services
 
-{% if health_report.failed_service_count | int > 0 %}
+{% if health_check_report.failed_service_count | int > 0 %}
 ```text
-{{ health_report.failed_services | join('\n') }}
+{{ health_check_report.failed_services | join('\n') }}
 ```
 {% else %}
 None.
@@ -28,41 +29,41 @@ None.
 ## Filesystem
 
 ```text
-{{ health_report.disk_details }}
+{{ health_check_report.disk_details }}
 ```
 
 ## Memory
 
 ```text
-{{ health_report.memory_details }}
+{{ health_check_report.memory_details }}
 ```
 
 ## Uptime and load
 
 ```text
-{{ health_report.uptime_details }}
+{{ health_check_report.uptime_details }}
 ```
 
-{% if health_report.docker_applicable | bool %}
+{% if health_check_report.docker_applicable | bool %}
 ## Docker containers
 
 ```text
-{{ health_report.docker_containers }}
+{{ health_check_report.docker_containers }}
 ```
 {% endif %}
 
-{% if health_report.proxmox_applicable | bool %}
+{% if health_check_report.proxmox_applicable | bool %}
 ## Proxmox
 
 Version:
 
 ```text
-{{ health_report.proxmox_version }}
+{{ health_check_report.proxmox_version }}
 ```
 
 Storage:
 
 ```text
-{{ health_report.proxmox_storage }}
+{{ health_check_report.proxmox_storage }}
 ```
 {% endif %}
