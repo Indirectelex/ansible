@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Ansible health check daily at 11:00 AM
+
+[Timer]
+OnCalendar=*-*-* 11:00:00
+RandomizedDelaySec=15m
+Persistent=true
+AccuracySec=1m
+Unit=ansible-health-check.service
+
+[Install]
+WantedBy=timers.target

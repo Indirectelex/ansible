@@ -1,0 +1,15 @@
+[Unit]
+Description=Ansible read-only infrastructure health check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hackwell
+Group=hackwell
+WorkingDirectory=/home/hackwell/infrastructure/ansible
+Environment=HOME=/home/hackwell
+ExecStart=/home/hackwell/.local/bin/ansible-playbook playbooks/health-check.yml
+
+[Install]
+WantedBy=multi-user.target
