@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  >
+  <title>Infrastructure Health</title>
+  <link rel="stylesheet" href="assets/dashboard.css">
+</head>
+<body>
+  <header class="page-header">
+    <div>
+      <p class="eyebrow">Hackwell monitoring</p>
+      <h1>Infrastructure Health</h1>
+      <p id="dashboard-meta" class="muted">Loading reports…</p>
+    </div>
+
+    <button id="refresh-button" type="button">
+      Refresh
+    </button>
+  </header>
+
+  <section class="toolbar" aria-label="Report filters">
+    <label>
+      <span>Find a host</span>
+      <input
+        id="host-search"
+        type="search"
+        placeholder="Search by hostname"
+      >
+    </label>
+
+    <label>
+      <span>Status</span>
+      <select id="status-filter">
+        <option value="ALL">All statuses</option>
+        <option value="CRITICAL">Critical</option>
+        <option value="WARNING">Warning</option>
+        <option value="UNREACHABLE">Unreachable</option>
+        <option value="OK">OK</option>
+        <option value="UNKNOWN">Unknown</option>
+      </select>
+    </label>
+  </section>
+
+  <main>
+    <div id="host-grid" class="host-grid" aria-live="polite"></div>
+  </main>
+
+  <dialog id="host-dialog">
+    <div class="dialog-header">
+      <div>
+        <p class="eyebrow">Host report</p>
+        <h2 id="dialog-title"></h2>
+      </div>
+
+      <button
+        id="dialog-close"
+        class="secondary-button"
+        type="button"
+      >
+        Close
+      </button>
+    </div>
+
+    <div id="dialog-content"></div>
+  </dialog>
+
+  <script src="assets/dashboard.js"></script>
+</body>
+</html>

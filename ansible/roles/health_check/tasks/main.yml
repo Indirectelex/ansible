@@ -218,6 +218,9 @@
 - name: Evaluate collection policies
   ansible.builtin.include_tasks: collection_policy.yml
 
+- name: Build dashboard-compatible report schema
+  ansible.builtin.include_tasks: dashboard_schema.yml
+
 - name: Ensure report directory exists on Hackwell
   ansible.builtin.file:
     path: "{{ health_check_report_dir }}"

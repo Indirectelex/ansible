@@ -36,9 +36,26 @@
     content: >-
       {{
         {
+          'schema_version': 1,
+          'report_type': 'host_health',
           'generated_at': lookup('pipe', 'date --iso-8601=seconds'),
           'host': inventory_hostname,
           'status': 'UNREACHABLE',
+          'status_reasons': ['Ansible connection failed'],
+          'metrics': [],
+          'sections': [
+            {
+              'id': 'connectivity',
+              'label': 'Connectivity',
+              'category': 'connectivity',
+              'display': 'preformatted',
+              'order': 10,
+              'status': 'UNREACHABLE',
+              'content':
+                health_check_connection.msg
+                | default('Connection test failed')
+            }
+          ],
           'message':
             health_check_connection.msg
             | default('Connection test failed')

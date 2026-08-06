@@ -1,0 +1,427 @@
+---
+- name: Initialize dashboard status reasons
+  ansible.builtin.set_fact:
+    health_check_status_reasons: []
+  changed_when: false
+
+- name: Add root disk status reason
+  ansible.builtin.set_fact:
+    health_check_status_reasons: >-
+      {{
+        health_check_status_reasons
+        + [
+          'Root disk '
+          ~ (health_check_report.root_disk_percent | string)
+          ~ '%'
+        ]
+      }}
+  when: >-
+    health_check_report.root_disk_percent | int
+    >= health_check_disk_warning_percent
+  changed_when: false
+
+- name: Add inode status reason
+  ansible.builtin.set_fact:
+    health_check_status_reasons: >-
+      {{
+        health_check_status_reasons
+        + [
+          'Root inodes '
+          ~ (health_check_report.root_inode_percent | string)
+          ~ '%'
+        ]
+      }}
+  when: >-
+    health_check_report.root_inode_percent | int
+    >= health_check_inode_warning_percent
+  changed_when: false
+
+- name: Add memory status reason
+  ansible.builtin.set_fact:
+    health_check_status_reasons: >-
+      {{
+        health_check_status_reasons
+        + [
+          'Memory '
+          ~ (health_check_report.memory_percent | string)
+          ~ '%'
+        ]
+      }}
+  when: >-
+    health_check_report.memory_percent | float
+    >= health_check_memory_warning_percent
+  changed_when: false
+
+- name: Add swap status reason
+  ansible.builtin.set_fact:
+    health_check_status_reasons: >-
+      {{
+        health_check_status_reasons
+        + [
+          'Swap '
+          ~ (health_check_report.swap_percent | default(0) | string)
+          ~ '%'
+        ]
+      }}
+  when: >-
+    health_check_report.swap_percent | default(0) | float
+    >= health_check_swap_warning_percent
+  changed_when: false
+
+- name: Add load status reason
+  ansible.builtin.set_fact:
+    health_check_status_reasons: >-
+      {{
+        health_check_status_reasons
+        + [
+          'Load per CPU '
+          ~ (health_check_report.load_per_cpu | default(0) | string)
+        ]
+      }}
+  when: >-
+    health_check_report.load_per_cpu | default(0) | float
+    >= health_check_load_warning_per_cpu
+  changed_when: false
+
+- name: Add failed service status reason
+  ansible.builtin.set_fact:
+    health_check_status_reasons: >-
+      {{
+        health_check_status_reasons
+        + [
+          (health_check_report.failed_service_count | string)
+          ~ ' failed service(s)'
+        ]
+      }}
+  when: health_check_report.failed_service_count | int > 0
+  changed_when: false
+
+- name: Add update status reason
+  ansible.builtin.set_fact:
+    health_check_status_reasons: >-
+      {{
+        health_check_status_reasons
+        + [
+          (health_check_report.updates_available | string)
+          ~ ' updates available'
+        ]
+      }}
+  when: health_check_report.updates_available | int > 0
+  changed_when: false
+
+- name: Add reboot status reason
+  ansible.builtin.set_fact:
+    health_check_status_reasons: >-
+      {{ health_check_status_reasons + ['Reboot required'] }}
+  when: health_check_report.reboot_required | bool
+  changed_when: false
+
+- name: Add time synchronization status reason
+  ansible.builtin.set_fact:
+    health_check_status_reasons: >-
+      {{ health_check_status_reasons + ['Time is not synchronized'] }}
+  when:
+    - health_check_report.time_sync_required | default(false) | bool
+    - >-
+      health_check_report.time_synchronized
+      | default('unknown')
+      | string
+      | lower
+      != 'yes'
+  changed_when: false
+
+- name: Add APT collection failure reason
+  ansible.builtin.set_fact:
+    health_check_status_reasons: >-
+      {{ health_check_status_reasons + ['APT collection failed'] }}
+  when: health_check_report.apt_collection_failed | default(false) | bool
+  changed_when: false
+
+- name: Add Docker collection failure reason
+  ansible.builtin.set_fact:
+    health_check_status_reasons: >-
+      {{ health_check_status_reasons + ['Docker collection failed'] }}
+  when: health_check_report.docker_collection_failed | default(false) | bool
+  changed_when: false
+
+- name: Add Proxmox collection failure reason
+  ansible.builtin.set_fact:
+    health_check_status_reasons: >-
+      {{ health_check_status_reasons + ['Proxmox collection failed'] }}
+  when: health_check_report.proxmox_collection_failed | default(false) | bool
+  changed_when: false
+
+- name: Build dashboard metric definitions
+  ansible.builtin.set_fact:
+    health_check_dashboard_metrics:
+      - id: root_disk
+        label: Root disk
+        category: storage
+        value: "{{ health_check_report.root_disk_percent | int }}"
+        unit: "%"
+        display: gauge
+        order: 10
+        status: >-
+          {{
+            'CRITICAL'
+            if (
+              health_check_report.root_disk_percent | int
+              >= health_check_disk_critical_percent
+            )
+            else 'WARNING'
+            if (
+              health_check_report.root_disk_percent | int
+              >= health_check_disk_warning_percent
+            )
+            else 'OK'
+          }}
+
+      - id: root_inodes
+        label: Root inodes
+        category: storage
+        value: "{{ health_check_report.root_inode_percent | int }}"
+        unit: "%"
+        display: gauge
+        order: 20
+        status: >-
+          {{
+            'CRITICAL'
+            if (
+              health_check_report.root_inode_percent | int
+              >= health_check_inode_critical_percent
+            )
+            else 'WARNING'
+            if (
+              health_check_report.root_inode_percent | int
+              >= health_check_inode_warning_percent
+            )
+            else 'OK'
+          }}
+
+      - id: memory
+        label: Memory
+        category: resources
+        value: "{{ health_check_report.memory_percent | float }}"
+        unit: "%"
+        display: gauge
+        order: 30
+        status: >-
+          {{
+            'CRITICAL'
+            if (
+              health_check_report.memory_percent | float
+              >= health_check_memory_critical_percent
+            )
+            else 'WARNING'
+            if (
+              health_check_report.memory_percent | float
+              >= health_check_memory_warning_percent
+            )
+            else 'OK'
+          }}
+
+      - id: swap
+        label: Swap
+        category: resources
+        value: "{{ health_check_report.swap_percent | default(0) | float }}"
+        unit: "%"
+        display: gauge
+        order: 40
+        status: >-
+          {{
+            'CRITICAL'
+            if (
+              health_check_report.swap_percent | default(0) | float
+              >= health_check_swap_critical_percent
+            )
+            else 'WARNING'
+            if (
+              health_check_report.swap_percent | default(0) | float
+              >= health_check_swap_warning_percent
+            )
+            else 'OK'
+          }}
+
+      - id: load_per_cpu
+        label: Load per CPU
+        category: resources
+        value: "{{ health_check_report.load_per_cpu | default(0) | float }}"
+        display: number
+        order: 50
+        status: >-
+          {{
+            'CRITICAL'
+            if (
+              health_check_report.load_per_cpu | default(0) | float
+              >= health_check_load_critical_per_cpu
+            )
+            else 'WARNING'
+            if (
+              health_check_report.load_per_cpu | default(0) | float
+              >= health_check_load_warning_per_cpu
+            )
+            else 'OK'
+          }}
+
+      - id: updates
+        label: Updates available
+        category: maintenance
+        value: "{{ health_check_report.updates_available | int }}"
+        unit: packages
+        display: number
+        order: 60
+        status: >-
+          {{
+            'WARNING'
+            if health_check_report.updates_available | int > 0
+            else 'OK'
+          }}
+
+      - id: failed_services
+        label: Failed services
+        category: services
+        value: "{{ health_check_report.failed_service_count | int }}"
+        unit: services
+        display: number
+        order: 70
+        status: >-
+          {{
+            'WARNING'
+            if health_check_report.failed_service_count | int > 0
+            else 'OK'
+          }}
+
+      - id: reboot_required
+        label: Reboot required
+        category: maintenance
+        value: "{{ health_check_report.reboot_required | bool }}"
+        display: boolean
+        order: 80
+        status: >-
+          {{
+            'WARNING'
+            if health_check_report.reboot_required | bool
+            else 'OK'
+          }}
+
+      - id: time_synchronized
+        label: Time synchronized
+        category: services
+        value: "{{ health_check_report.time_synchronized | default('unknown') }}"
+        display: status
+        order: 90
+        status: >-
+          {{
+            'WARNING'
+            if (
+              health_check_report.time_sync_required | default(false) | bool
+              and (
+                health_check_report.time_synchronized
+                | default('unknown')
+                | string
+                | lower
+              ) != 'yes'
+            )
+            else 'OK'
+          }}
+  changed_when: false
+
+- name: Build base dashboard sections
+  ansible.builtin.set_fact:
+    health_check_dashboard_sections:
+      - id: failed_services
+        label: Failed services
+        category: services
+        display: list
+        order: 10
+        items: "{{ health_check_report.failed_services | default([]) }}"
+
+      - id: filesystem_details
+        label: Filesystem details
+        category: technical
+        display: preformatted
+        order: 100
+        content: "{{ health_check_report.disk_details | default('') }}"
+
+      - id: memory_details
+        label: Memory details
+        category: technical
+        display: preformatted
+        order: 110
+        content: "{{ health_check_report.memory_details | default('') }}"
+
+      - id: uptime_details
+        label: Uptime and load
+        category: technical
+        display: preformatted
+        order: 120
+        content: "{{ health_check_report.uptime_details | default('') }}"
+  changed_when: false
+
+- name: Add Docker dashboard section
+  ansible.builtin.set_fact:
+    health_check_dashboard_sections: >-
+      {{
+        health_check_dashboard_sections
+        + [
+          {
+            'id': 'docker_containers',
+            'label': 'Docker containers',
+            'category': 'docker',
+            'display': 'preformatted',
+            'order': 200,
+            'content':
+              health_check_report.docker_containers
+              | default('No Docker data')
+          }
+        ]
+      }}
+  when: health_check_report.docker_applicable | default(false) | bool
+  changed_when: false
+
+- name: Add Proxmox dashboard section
+  ansible.builtin.set_fact:
+    health_check_dashboard_sections: >-
+      {{
+        health_check_dashboard_sections
+        + [
+          {
+            'id': 'proxmox',
+            'label': 'Proxmox',
+            'category': 'proxmox',
+            'display': 'preformatted',
+            'order': 210,
+            'content':
+              'Version:\n'
+              ~ (
+                health_check_report.proxmox_version
+                | default('Unavailable')
+              )
+              ~ '\n\nStorage:\n'
+              ~ (
+                health_check_report.proxmox_storage
+                | default('Unavailable')
+              )
+          }
+        ]
+      }}
+  when: health_check_report.proxmox_applicable | default(false) | bool
+  changed_when: false
+
+- name: Add dashboard schema to health report
+  ansible.builtin.set_fact:
+    health_check_report: >-
+      {{
+        health_check_report
+        | combine(
+            {
+              'schema_version': 1,
+              'report_type': 'host_health',
+              'status_reasons': health_check_status_reasons,
+              'metrics': health_check_dashboard_metrics,
+              'sections': health_check_dashboard_sections
+            },
+            recursive=true
+          )
+      }}
+  changed_when: false

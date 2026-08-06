@@ -13,3 +13,73 @@
 
   roles:
     - role: health_check
+
+- name: Publish scalable monitoring dashboard
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tags:
+    - dashboard
+  vars:
+    health_dashboard_report_dir: "{{ playbook_dir }}/../reports"
+    health_dashboard_source_dir: "{{ playbook_dir }}/../dashboard"
+
+  tasks:
+    - name: Ensure dashboard asset directory exists
+      ansible.builtin.file:
+        path: "{{ health_dashboard_report_dir }}/assets"
+        state: directory
+        mode: "0750"
+      changed_when: false
+
+    - name: Publish dashboard HTML
+      ansible.builtin.copy:
+        src: "{{ health_dashboard_source_dir }}/index.html"
+        dest: "{{ health_dashboard_report_dir }}/index.html"
+        mode: "0640"
+      changed_when: false
+
+    - name: Publish dashboard assets
+      ansible.builtin.copy:
+        src: "{{ health_dashboard_source_dir }}/assets/"
+        dest: "{{ health_dashboard_report_dir }}/assets/"
+        mode: "0640"
+        directory_mode: "0750"
+      changed_when: false
+
+    - name: Initialize monitored host manifest
+      ansible.builtin.set_fact:
+        health_dashboard_hosts: []
+      changed_when: false
+
+    - name: Add monitored hosts to dashboard manifest
+      ansible.builtin.set_fact:
+        health_dashboard_hosts: >-
+          {{
+            health_dashboard_hosts
+            + [
+              {
+                'id': item,
+                'report': item ~ '.json',
+                'markdown': item ~ '.md'
+              }
+            ]
+          }}
+      loop: "{{ groups.get('monitoring_enabled', []) | sort }}"
+      changed_when: false
+
+    - name: Write dashboard manifest
+      ansible.builtin.copy:
+        content: >-
+          {{
+            {
+              'schema_version': 1,
+              'generated_at':
+                lookup('pipe', 'date --iso-8601=seconds'),
+              'hosts': health_dashboard_hosts
+            }
+            | to_nice_json
+          }}
+        dest: "{{ health_dashboard_report_dir }}/manifest.json"
+        mode: "0640"
+      changed_when: false
