@@ -1,0 +1,13 @@
+---
+# ERPNext controlled update settings
+
+erpnext_update_mode: check
+
+erpnext_site: vault.echodata.ca
+erpnext_compose_file: /root/echodata-erpnext-compose.yml
+
+erpnext_major_version: 16
+erpnext_release_delay_hours: 24
+
+erpnext_github_releases_url: >-
+  https://api.github.com/repos/frappe/erpnext/releases?per_page=100

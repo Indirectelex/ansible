@@ -1,0 +1,10 @@
+---
+- name: Validate ERPNext update mode
+  ansible.builtin.assert:
+    that:
+      - erpnext_update_mode in ['check', 'update']
+    fail_msg: >-
+      erpnext_update_mode must be either 'check' or 'update'.
+
+- name: Run ERPNext release checks
+  ansible.builtin.include_tasks: check.yml

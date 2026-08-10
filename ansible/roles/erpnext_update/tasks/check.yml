@@ -1,0 +1,125 @@
+---
+- name: Check ERPNext production Compose file
+  ansible.builtin.stat:
+    path: "{{ erpnext_compose_file }}"
+  register: erpnext_compose_stat
+
+- name: Require ERPNext production Compose file
+  ansible.builtin.assert:
+    that:
+      - erpnext_compose_stat.stat.exists
+      - erpnext_compose_stat.stat.isreg
+    fail_msg: >-
+      ERPNext Compose file was not found at
+      {{ erpnext_compose_file }}.
+
+- name: Read ERPNext production Compose file
+  ansible.builtin.slurp:
+    src: "{{ erpnext_compose_file }}"
+  register: erpnext_compose_raw
+
+- name: Extract ERPNext image tags from Compose
+  ansible.builtin.set_fact:
+    erpnext_compose_versions: >-
+      {{
+        (
+          erpnext_compose_raw.content
+          | b64decode
+          | regex_findall(
+              'frappe/erpnext:(v16\.[0-9]+\.[0-9]+)'
+            )
+          | unique
+          | list
+        )
+      }}
+
+- name: Require exactly one ERPNext v16 version
+  ansible.builtin.assert:
+    that:
+      - erpnext_compose_versions | length == 1
+    fail_msg: >-
+      Expected exactly one unique frappe/erpnext v16 image version
+      in {{ erpnext_compose_file }}, but found:
+      {{ erpnext_compose_versions }}
+
+- name: Record currently configured ERPNext version
+  ansible.builtin.set_fact:
+    erpnext_current_version: "{{ erpnext_compose_versions[0] }}"
+
+- name: Query official ERPNext GitHub releases
+  ansible.builtin.uri:
+    url: "{{ erpnext_github_releases_url }}"
+    method: GET
+    return_content: true
+    status_code: 200
+    headers:
+      Accept: application/vnd.github+json
+      User-Agent: EchoDATA-Ansible-ERPNext-Updater
+  register: erpnext_github_releases
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Initialize newest ERPNext v16 release
+  ansible.builtin.set_fact:
+    erpnext_latest_release: {}
+
+- name: Find newest stable ERPNext v16 release
+  ansible.builtin.set_fact:
+    erpnext_latest_release: "{{ item }}"
+  loop: "{{ erpnext_github_releases.json }}"
+  loop_control:
+    label: "{{ item.tag_name | default('unnamed') }}"
+  when:
+    - not (item.draft | default(false))
+    - not (item.prerelease | default(false))
+    - item.tag_name | default('') is
+      match('^v16\.[0-9]+\.[0-9]+$')
+    - >-
+      erpnext_latest_release | length == 0
+      or
+      (
+        item.tag_name[1:]
+        is ansible.builtin.version(
+          erpnext_latest_release.tag_name[1:],
+          '>',
+          version_type='semver'
+        )
+      )
+  no_log: true
+
+- name: Require a stable ERPNext v16 release
+  ansible.builtin.assert:
+    that:
+      - erpnext_latest_release | length > 0
+      - erpnext_latest_release.tag_name is defined
+    fail_msg: >-
+      No stable ERPNext v{{ erpnext_major_version }}
+      release was found on GitHub.
+
+- name: Determine ERPNext update status
+  ansible.builtin.set_fact:
+    erpnext_update_available: >-
+      {{
+        erpnext_latest_release.tag_name[1:]
+        is ansible.builtin.version(
+          erpnext_current_version[1:],
+          '>',
+          version_type='semver'
+        )
+      }}
+
+- name: Display ERPNext release status
+  ansible.builtin.debug:
+    msg:
+      - "Site: {{ erpnext_site }}"
+      - "Current ERPNext: {{ erpnext_current_version }}"
+      - "Latest stable v16: {{ erpnext_latest_release.tag_name }}"
+      - "Published: {{ erpnext_latest_release.published_at }}"
+      - >-
+        Status:
+        {{
+          'UPDATE AVAILABLE'
+          if erpnext_update_available
+          else 'CURRENT'
+        }}

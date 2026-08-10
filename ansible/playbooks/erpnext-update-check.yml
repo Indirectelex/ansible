@@ -1,0 +1,10 @@
+---
+- name: Check ERPNext release status
+  hosts: docker-ct
+  gather_facts: false
+  become: true
+
+  roles:
+    - role: erpnext_update
+      vars:
+        erpnext_update_mode: check
