@@ -1,0 +1,537 @@
+---
+# ============================================================
+# RELEASE SAFETY GATE
+# ============================================================
+
+- name: Convert ERPNext release publication time to epoch
+  ansible.builtin.command:
+    argv:
+      - date
+      - -u
+      - -d
+      - "{{ erpnext_latest_release.published_at }}"
+      - +%s
+  delegate_to: localhost
+  become: false
+  register: erpnext_release_epoch
+  changed_when: false
+
+- name: Read current epoch time
+  ansible.builtin.command:
+    argv:
+      - date
+      - -u
+      - +%s
+  delegate_to: localhost
+  become: false
+  register: erpnext_current_epoch
+  changed_when: false
+
+- name: Calculate ERPNext release age
+  ansible.builtin.set_fact:
+    erpnext_release_age_hours: >-
+      {{
+        (
+          (
+            erpnext_current_epoch.stdout | int
+          )
+          -
+          (
+            erpnext_release_epoch.stdout | int
+          )
+        ) // 3600
+      }}
+
+- name: Display ERPNext update candidate
+  ansible.builtin.debug:
+    msg:
+      - "Current: {{ erpnext_current_version }}"
+      - "Target: {{ erpnext_latest_release.tag_name }}"
+      - "Release age: {{ erpnext_release_age_hours }} hours"
+      - "Required age: {{ erpnext_release_delay_hours }} hours"
+
+- name: Delay very recent ERPNext release
+  ansible.builtin.debug:
+    msg: >-
+      ERPNext {{ erpnext_latest_release.tag_name }} is newer than
+      {{ erpnext_release_delay_hours }} hours. Automatic update deferred.
+  when:
+    - erpnext_release_age_hours | int < erpnext_release_delay_hours | int
+
+- name: Stop processing when release is inside safety delay
+  ansible.builtin.meta: end_host
+  when:
+    - erpnext_release_age_hours | int < erpnext_release_delay_hours | int
+
+# ============================================================
+# PREFLIGHT
+# ============================================================
+
+- name: Check free disk space on docker-ct
+  ansible.builtin.command:
+    argv:
+      - df
+      - -Pk
+      - /root
+  register: erpnext_disk_space
+  changed_when: false
+
+- name: Record available disk space
+  ansible.builtin.set_fact:
+    erpnext_available_kb: >-
+      {{
+        erpnext_disk_space.stdout_lines[-1].split()[3] | int
+      }}
+
+- name: Require enough disk space for ERPNext update
+  ansible.builtin.assert:
+    that:
+      - erpnext_available_kb | int >= erpnext_min_free_kb | int
+    fail_msg: >-
+      ERPNext update refused. Only
+      {{ erpnext_available_kb }} KiB are free on /root.
+      At least {{ erpnext_min_free_kb }} KiB are required.
+
+- name: Check running ERPNext version before update
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ erpnext_backend_container }}"
+      - sh
+      - -lc
+      - >-
+        cd '{{ erpnext_bench_dir }}' &&
+        bench version
+  register: erpnext_running_version_before
+  changed_when: false
+
+- name: Display running ERPNext version
+  ansible.builtin.debug:
+    var: erpnext_running_version_before.stdout_lines
+
+- name: Require running version to match Compose
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          'erpnext ' + erpnext_current_version[1:]
+        ) in erpnext_running_version_before.stdout
+    fail_msg: >-
+      Running ERPNext does not match the version configured
+      in {{ erpnext_compose_file }}.
+
+# ============================================================
+# PULL AND TEST TARGET IMAGE
+# ============================================================
+
+- name: Pull target ERPNext Docker image
+  ansible.builtin.command:
+    argv:
+      - docker
+      - pull
+      - "frappe/erpnext:{{ erpnext_latest_release.tag_name }}"
+  register: erpnext_image_pull
+  changed_when: true
+
+- name: Test target ERPNext image
+  ansible.builtin.command:
+    argv:
+      - timeout
+      - 120s
+      - docker
+      - run
+      - --rm
+      - --entrypoint
+      - bash
+      - "frappe/erpnext:{{ erpnext_latest_release.tag_name }}"
+      - -lc
+      - >-
+        cd '{{ erpnext_bench_dir }}' &&
+        bench version
+  register: erpnext_target_image_version
+  changed_when: false
+
+- name: Display target image versions
+  ansible.builtin.debug:
+    var: erpnext_target_image_version.stdout_lines
+
+- name: Require expected ERPNext target image
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          'erpnext ' + erpnext_latest_release.tag_name[1:]
+        ) in erpnext_target_image_version.stdout
+    fail_msg: >-
+      Pulled Docker image does not report the expected
+      ERPNext version {{ erpnext_latest_release.tag_name }}.
+
+# ============================================================
+# VERIFIED BACKUP
+# ============================================================
+
+- name: Create and verify pre-update ERPNext backup
+  ansible.builtin.include_tasks: backup.yml
+
+- name: Report successful ERPNext preflight test
+  ansible.builtin.debug:
+    msg:
+      - "ERPNext automatic-update preflight: SUCCESS"
+      - "Current version: {{ erpnext_current_version }}"
+      - "Target image tested: {{ erpnext_latest_release.tag_name }}"
+      - "Backup: {{ erpnext_backup_directory }}"
+      - "Production has NOT been modified."
+  when:
+    - erpnext_update_preflight_only | bool
+
+- name: Stop after safe preflight test
+  ansible.builtin.meta: end_host
+  when:
+    - erpnext_update_preflight_only | bool
+
+# ============================================================
+# UPDATE COMPOSE FILE
+# ============================================================
+
+- name: Change ERPNext image version in production Compose
+  ansible.builtin.replace:
+    path: "{{ erpnext_compose_file }}"
+    regexp: >-
+      frappe/erpnext:{{
+        erpnext_current_version | regex_escape
+      }}
+    replace: >-
+      frappe/erpnext:{{
+        erpnext_latest_release.tag_name
+      }}
+    backup: true
+  register: erpnext_compose_replacement
+
+- name: Require Compose image replacement
+  ansible.builtin.assert:
+    that:
+      - erpnext_compose_replacement.changed
+    fail_msg: >-
+      ERPNext version could not be replaced in
+      {{ erpnext_compose_file }}.
+
+- name: Validate modified production Compose file
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - -f
+      - "{{ erpnext_compose_file }}"
+      - config
+  changed_when: false
+
+# ============================================================
+# CONTROLLED CUTOVER
+#
+# Anything failing BEFORE migration restores the old Compose
+# configuration and starts the previous stack again.
+# ============================================================
+
+- name: Perform pre-migration ERPNext cutover
+  block:
+
+    - name: Stop ERPNext stack
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ erpnext_compose_file }}"
+          - down
+      changed_when: true
+
+    - name: Start new backend and required dependencies
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ erpnext_compose_file }}"
+          - up
+          - -d
+          - backend
+      changed_when: true
+
+    - name: Wait for new ERPNext backend container
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ erpnext_backend_container }}"
+          - "true"
+      register: erpnext_backend_ready
+      changed_when: false
+      retries: 30
+      delay: 2
+      until: erpnext_backend_ready.rc == 0
+
+    - name: Check new running ERPNext version
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ erpnext_backend_container }}"
+          - sh
+          - -lc
+          - >-
+            cd '{{ erpnext_bench_dir }}' &&
+            bench version
+      register: erpnext_running_version_new
+      changed_when: false
+
+    - name: Require new backend to use target version
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              'erpnext ' + erpnext_latest_release.tag_name[1:]
+            ) in erpnext_running_version_new.stdout
+        fail_msg: >-
+          New backend is not running
+          {{ erpnext_latest_release.tag_name }}.
+
+  rescue:
+
+    - name: Report pre-migration cutover failure
+      ansible.builtin.debug:
+        msg: >-
+          Pre-migration cutover failed.
+          Restoring previous Compose configuration.
+
+    - name: Restore pre-update Compose configuration
+      ansible.builtin.copy:
+        src: >-
+          {{ erpnext_backup_directory }}/echodata-erpnext-compose.yml
+        dest: "{{ erpnext_compose_file }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Restart previous ERPNext stack
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ erpnext_compose_file }}"
+          - up
+          - -d
+      changed_when: true
+
+    - name: Stop automatic update after rollback
+      ansible.builtin.fail:
+        msg: >-
+          ERPNext update aborted before database migration.
+          Previous Compose configuration was restored.
+
+# ============================================================
+# DATABASE MIGRATION
+#
+# IMPORTANT:
+# Once migration begins we do NOT automatically downgrade.
+# ============================================================
+
+- name: Migrate ERPNext production site
+  block:
+
+    - name: Run bench migrate
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ erpnext_backend_container }}"
+          - sh
+          - -lc
+          - >-
+            cd '{{ erpnext_bench_dir }}' &&
+            bench --site '{{ erpnext_site }}' migrate
+      register: erpnext_migrate
+      changed_when: true
+
+    - name: Display migration output
+      ansible.builtin.debug:
+        var: erpnext_migrate.stdout_lines
+
+  rescue:
+
+    - name: Stop after ERPNext migration failure
+      ansible.builtin.fail:
+        msg: >-
+          ERPNext database migration FAILED.
+          Automatic rollback has intentionally NOT been attempted.
+          The public stack remains stopped.
+          Verified backup:
+          {{ erpnext_backup_directory }}
+
+# ============================================================
+# KNOWN DUCKDB SCHEDULER CLEANUP
+#
+# Only remove the obsolete scheduled job when the installed
+# Frappe code no longer contains cleanup_old_syncs.
+# ============================================================
+
+- name: Check whether old DuckDB cleanup function exists
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ erpnext_backend_container }}"
+      - sh
+      - -lc
+      - >-
+        cd '{{ erpnext_bench_dir }}' &&
+        ./env/bin/python -c
+        "from frappe.core.doctype.duckdb_sync import duckdb_sync;
+        print('yes' if hasattr(duckdb_sync, 'cleanup_old_syncs') else 'no')"
+  register: erpnext_duckdb_method
+  changed_when: false
+
+- name: Find obsolete DuckDB scheduled job
+  ansible.builtin.shell: |
+    set -o pipefail
+    printf '%s\n' \
+      'SELECT name FROM `tabScheduled Job Type` WHERE method="frappe.core.doctype.duckdb_sync.duckdb_sync.cleanup_old_syncs";' \
+    | docker exec -i {{ erpnext_backend_container }} \
+        sh -lc "cd '{{ erpnext_bench_dir }}' && bench --site '{{ erpnext_site }}' mariadb" \
+    | awk 'NR > 1 && NF {print $1; exit}'
+  args:
+    executable: /bin/bash
+  register: erpnext_stale_duckdb_job
+  changed_when: false
+  when:
+    - erpnext_duckdb_method.stdout | trim == 'no'
+
+- name: Remove obsolete DuckDB scheduled job
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ erpnext_backend_container }}"
+      - sh
+      - -lc
+      - >-
+        cd '{{ erpnext_bench_dir }}' &&
+        bench --site '{{ erpnext_site }}' execute
+        "frappe.delete_doc('Scheduled Job Type',
+        '{{ erpnext_stale_duckdb_job.stdout | trim }}')"
+  changed_when: true
+  when:
+    - erpnext_duckdb_method.stdout | trim == 'no'
+    - erpnext_stale_duckdb_job.stdout | trim | length > 0
+
+# ============================================================
+# START COMPLETE STACK
+# ============================================================
+
+- name: Start complete ERPNext production stack
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - -f
+      - "{{ erpnext_compose_file }}"
+      - up
+      - -d
+  changed_when: true
+
+# ============================================================
+# POST-UPDATE HEALTH CHECKS
+# ============================================================
+
+- name: Wait for ERPNext workers
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ erpnext_backend_container }}"
+      - sh
+      - -lc
+      - >-
+        cd '{{ erpnext_bench_dir }}' &&
+        bench --site '{{ erpnext_site }}' doctor
+  register: erpnext_doctor
+  changed_when: false
+  retries: 24
+  delay: 5
+  until: >-
+    erpnext_doctor.stdout
+    | regex_search('Workers online:\s+[1-9][0-9]*')
+
+- name: Display ERPNext doctor result
+  ansible.builtin.debug:
+    var: erpnext_doctor.stdout_lines
+
+- name: Verify local ERPNext frontend
+  ansible.builtin.uri:
+    url: "{{ erpnext_local_url }}"
+    method: GET
+    headers:
+      Host: "{{ erpnext_site }}"
+    status_code:
+      - 200
+      - 301
+      - 302
+    timeout: 30
+  register: erpnext_local_http
+  retries: 12
+  delay: 5
+  until:
+    - erpnext_local_http.status in [200, 301, 302]
+
+- name: Verify public ERPNext site
+  ansible.builtin.uri:
+    url: "{{ erpnext_public_url }}"
+    method: GET
+    status_code: 200
+    timeout: 30
+    validate_certs: true
+  delegate_to: localhost
+  become: false
+  register: erpnext_public_http
+  retries: 12
+  delay: 10
+  until:
+    - erpnext_public_http.status == 200
+
+- name: Verify final ERPNext version
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ erpnext_backend_container }}"
+      - sh
+      - -lc
+      - >-
+        cd '{{ erpnext_bench_dir }}' &&
+        bench version
+  register: erpnext_final_version
+  changed_when: false
+
+- name: Require final target version
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          'erpnext ' + erpnext_latest_release.tag_name[1:]
+        ) in erpnext_final_version.stdout
+
+- name: Report successful ERPNext update
+  ansible.builtin.debug:
+    msg:
+      - "ERPNext update: SUCCESS"
+      - >-
+        Version:
+        {{ erpnext_current_version }}
+        -> {{ erpnext_latest_release.tag_name }}
+      - "Site: {{ erpnext_site }}"
+      - "Workers: healthy"
+      - "Local HTTP: {{ erpnext_local_http.status }}"
+      - "Public HTTP: {{ erpnext_public_http.status }}"
+      - "Backup: {{ erpnext_backup_directory }}"

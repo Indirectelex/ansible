@@ -8,3 +8,12 @@
 
 - name: Run ERPNext release checks
   ansible.builtin.include_tasks: check.yml
+
+- name: Run controlled ERPNext update
+  ansible.builtin.include_tasks: update.yml
+  when:
+    - erpnext_update_mode == 'update'
+    - >-
+      (erpnext_update_available | bool)
+      or
+      (erpnext_update_preflight_only | bool)
