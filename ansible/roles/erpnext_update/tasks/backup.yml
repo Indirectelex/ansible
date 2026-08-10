@@ -1,0 +1,267 @@
+---
+- name: Generate ERPNext backup timestamp
+  ansible.builtin.set_fact:
+    erpnext_backup_stamp: "{{ now(utc=true, fmt='%Y%m%d_%H%M%S') }}"
+
+- name: Set ERPNext backup destination
+  ansible.builtin.set_fact:
+    erpnext_backup_directory: >-
+      {{ erpnext_backup_root }}/{{ erpnext_backup_stamp }}
+
+- name: Create ERPNext backup root
+  ansible.builtin.file:
+    path: "{{ erpnext_backup_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Create this ERPNext backup directory
+  ansible.builtin.file:
+    path: "{{ erpnext_backup_directory }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Verify production Compose file exists
+  ansible.builtin.stat:
+    path: "{{ erpnext_compose_file }}"
+  register: erpnext_backup_compose_stat
+
+- name: Require production Compose file
+  ansible.builtin.assert:
+    that:
+      - erpnext_backup_compose_stat.stat.exists
+      - erpnext_backup_compose_stat.stat.isreg
+    fail_msg: >-
+      Production Compose file does not exist:
+      {{ erpnext_compose_file }}
+
+- name: Verify ERPNext backend container is running
+  ansible.builtin.command:
+    argv:
+      - docker
+      - inspect
+      - --format
+      - "{{ '{{.State.Running}}' }}"
+      - "{{ erpnext_backend_container }}"
+  register: erpnext_backend_running
+  changed_when: false
+
+- name: Require running ERPNext backend
+  ansible.builtin.assert:
+    that:
+      - erpnext_backend_running.stdout | trim == 'true'
+    fail_msg: >-
+      ERPNext backend container is not running:
+      {{ erpnext_backend_container }}
+
+- name: Preserve production Compose file
+  ansible.builtin.copy:
+    src: "{{ erpnext_compose_file }}"
+    dest: "{{ erpnext_backup_directory }}/echodata-erpnext-compose.yml"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Preserve common Frappe site configuration
+  ansible.builtin.command:
+    argv:
+      - docker
+      - cp
+      - "{{ erpnext_backend_container }}:{{ erpnext_bench_dir }}/sites/common_site_config.json"
+      - "{{ erpnext_backup_directory }}/common_site_config.json"
+  changed_when: true
+
+- name: List site backups before new backup
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ erpnext_backend_container }}"
+      - find
+      - "{{ erpnext_container_backup_dir }}"
+      - -maxdepth
+      - "1"
+      - -type
+      - f
+      - -printf
+      - "%f\n"
+  register: erpnext_backups_before
+  changed_when: false
+
+- name: Create full ERPNext site backup
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ erpnext_backend_container }}"
+      - sh
+      - -lc
+      - >-
+        cd '{{ erpnext_bench_dir }}' &&
+        bench --site '{{ erpnext_site }}'
+        backup --with-files --compress
+  register: erpnext_backup_command
+  changed_when: true
+
+- name: Display Frappe backup result
+  ansible.builtin.debug:
+    var: erpnext_backup_command.stdout_lines
+
+- name: List site backups after new backup
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ erpnext_backend_container }}"
+      - find
+      - "{{ erpnext_container_backup_dir }}"
+      - -maxdepth
+      - "1"
+      - -type
+      - f
+      - -printf
+      - "%f\n"
+  register: erpnext_backups_after
+  changed_when: false
+
+- name: Determine newly-created Frappe backup files
+  ansible.builtin.set_fact:
+    erpnext_new_backup_files: >-
+      {{
+        erpnext_backups_after.stdout_lines
+        | difference(erpnext_backups_before.stdout_lines)
+        | list
+      }}
+
+- name: Display new backup files
+  ansible.builtin.debug:
+    var: erpnext_new_backup_files
+
+- name: Require Frappe backup artifacts
+  ansible.builtin.assert:
+    that:
+      - erpnext_new_backup_files | length >= 4
+      - >-
+        erpnext_new_backup_files
+        | select('match', '.*-database\.sql\.gz$')
+        | list
+        | length == 1
+      - >-
+        erpnext_new_backup_files
+        | select('match', '.*-site_config_backup\.json$')
+        | list
+        | length == 1
+      - >-
+        erpnext_new_backup_files
+        | select('match', '.*-private-files\.tgz$')
+        | list
+        | length == 1
+      - >-
+        erpnext_new_backup_files
+        | select('match', '.*-files\.tgz$')
+        | reject('match', '.*-private-files\.tgz$')
+        | list
+        | length == 1
+    fail_msg: >-
+      Frappe did not create the expected database/config/public/private
+      backup artifacts.
+
+- name: Copy new Frappe backups out of Docker volume
+  ansible.builtin.command:
+    argv:
+      - docker
+      - cp
+      - >-
+        {{ erpnext_backend_container }}:
+        {{- erpnext_container_backup_dir }}/{{ item }}
+      - "{{ erpnext_backup_directory }}/"
+  loop: "{{ erpnext_new_backup_files }}"
+  changed_when: true
+
+- name: Record database backup filename
+  ansible.builtin.set_fact:
+    erpnext_database_backup: >-
+      {{
+        erpnext_new_backup_files
+        | select('match', '.*-database\.sql\.gz$')
+        | first
+      }}
+    erpnext_public_backup: >-
+      {{
+        erpnext_new_backup_files
+        | select('match', '.*-files\.tgz$')
+        | reject('match', '.*-private-files\.tgz$')
+        | first
+      }}
+    erpnext_private_backup: >-
+      {{
+        erpnext_new_backup_files
+        | select('match', '.*-private-files\.tgz$')
+        | first
+      }}
+    erpnext_config_backup: >-
+      {{
+        erpnext_new_backup_files
+        | select('match', '.*-site_config_backup\.json$')
+        | first
+      }}
+
+- name: Verify compressed database backup
+  ansible.builtin.command:
+    argv:
+      - gzip
+      - -t
+      - "{{ erpnext_backup_directory }}/{{ erpnext_database_backup }}"
+  changed_when: false
+
+- name: Verify public files archive
+  ansible.builtin.command:
+    argv:
+      - tar
+      - -tzf
+      - "{{ erpnext_backup_directory }}/{{ erpnext_public_backup }}"
+  changed_when: false
+
+- name: Verify private files archive
+  ansible.builtin.command:
+    argv:
+      - tar
+      - -tzf
+      - "{{ erpnext_backup_directory }}/{{ erpnext_private_backup }}"
+  changed_when: false
+
+- name: Verify site config JSON
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -m
+      - json.tool
+      - "{{ erpnext_backup_directory }}/{{ erpnext_config_backup }}"
+  changed_when: false
+
+- name: Check database backup size
+  ansible.builtin.stat:
+    path: "{{ erpnext_backup_directory }}/{{ erpnext_database_backup }}"
+  register: erpnext_database_backup_stat
+
+- name: Reject suspiciously small database backup
+  ansible.builtin.assert:
+    that:
+      - erpnext_database_backup_stat.stat.size > 10240
+    fail_msg: >-
+      ERPNext database backup is suspiciously small:
+      {{ erpnext_database_backup_stat.stat.size }} bytes.
+
+- name: Report verified ERPNext backup
+  ansible.builtin.debug:
+    msg:
+      - "ERPNext backup: VERIFIED"
+      - "Site: {{ erpnext_site }}"
+      - "Directory: {{ erpnext_backup_directory }}"
+      - >-
+        Database:
+        {{ erpnext_database_backup_stat.stat.size }} bytes

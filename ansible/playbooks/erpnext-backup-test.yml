@@ -1,0 +1,11 @@
+---
+- name: Test verified ERPNext backup
+  hosts: docker-ct
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Run ERPNext backup role tasks
+      ansible.builtin.include_role:
+        name: erpnext_update
+        tasks_from: backup.yml

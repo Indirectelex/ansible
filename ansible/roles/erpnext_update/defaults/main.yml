@@ -11,3 +11,13 @@ erpnext_release_delay_hours: 24
 
 erpnext_github_releases_url: >-
   https://api.github.com/repos/frappe/erpnext/releases?per_page=100
+
+# Production Docker/Frappe paths
+erpnext_backend_container: echodata-erpnext-backend-1
+erpnext_bench_dir: /home/frappe/frappe-bench
+
+erpnext_container_backup_dir: >-
+  /home/frappe/frappe-bench/sites/{{ erpnext_site }}/private/backups
+
+# Host-side backup storage on docker-ct
+erpnext_backup_root: /root/backups/erpnext-auto
