@@ -7,7 +7,7 @@
     content="width=device-width, initial-scale=1"
   >
   <title>Infrastructure Health &amp; Patch Posture</title>
-  <link rel="stylesheet" href="assets/dashboard.css?v=2">
+  <link rel="stylesheet" href="assets/dashboard.css?v=3">
 </head>
 <body>
   <header class="page-header">
@@ -58,10 +58,14 @@
       <select id="patch-filter">
         <option value="ALL">All patch states</option>
         <option value="ERROR">Data error</option>
+        <option value="AUTOMATION_ERROR">Automation error</option>
+        <option value="AUTOMATION_OVERDUE">Automation overdue</option>
         <option value="REVIEW_REQUIRED">Review required</option>
         <option value="ACTION_NEEDED">Action needed</option>
         <option value="DATA_STALE">Data stale</option>
         <option value="REBOOT_PENDING">Reboot pending</option>
+        <option value="INSTALLING">Installing</option>
+        <option value="SCHEDULED">Scheduled</option>
         <option value="ROUTINE_MAINTENANCE">Routine maintenance</option>
         <option value="CURRENT">Current</option>
         <option value="UNKNOWN">Unknown</option>
@@ -92,6 +96,6 @@
     <div id="dialog-content"></div>
   </dialog>
 
-  <script src="assets/dashboard.js?v=2"></script>
+  <script src="assets/dashboard.js?v=3"></script>
 </body>
 </html>

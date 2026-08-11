@@ -21,3 +21,6 @@ __pycache__/
 
 ansible/reports/*
 !ansible/reports/.gitkeep
+
+# Controller-local monitoring history (not published by the dashboard server)
+ansible/.state/

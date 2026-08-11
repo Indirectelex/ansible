@@ -1,0 +1,92 @@
+---
+- name: Set controller observation time
+  ansible.builtin.set_fact:
+    health_check_observed_at: >-
+      {{ lookup('pipe', 'date --iso-8601=seconds') }}
+    health_check_observed_epoch: "{{ lookup('pipe', 'date +%s') | int }}"
+  changed_when: false
+
+- name: Ensure private patch-state directory exists on Hackwell
+  ansible.builtin.file:
+    path: "{{ health_check_state_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  changed_when: false
+
+- name: Check for existing host patch state on Hackwell
+  ansible.builtin.stat:
+    path: "{{ health_check_state_dir }}/{{ inventory_hostname }}.json"
+  delegate_to: localhost
+  become: false
+  register: health_check_patch_state_file
+  changed_when: false
+
+- name: Read existing host patch state on Hackwell
+  ansible.builtin.slurp:
+    src: "{{ health_check_state_dir }}/{{ inventory_hostname }}.json"
+  delegate_to: localhost
+  become: false
+  register: health_check_patch_state_raw
+  when: health_check_patch_state_file.stat.exists | bool
+  changed_when: false
+
+- name: Decode previous host patch state
+  ansible.builtin.set_fact:
+    health_check_previous_patch_state: >-
+      {{
+        health_check_patch_state_raw.content
+        | b64decode
+        | from_json
+        if health_check_patch_state_file.stat.exists | bool
+        else {}
+      }}
+  changed_when: false
+
+- name: Merge trusted pending-security history
+  ansible.builtin.set_fact:
+    health_check_patch_state: >-
+      {{
+        health_check_security_packages
+        | health_check_merge_pending_security_state(
+            health_check_previous_patch_state,
+            health_check_observed_at,
+            health_check_observed_epoch,
+            health_check_patch_counts_trusted
+          )
+      }}
+  changed_when: false
+
+- name: Save trusted host patch state on Hackwell
+  ansible.builtin.copy:
+    content: "{{ health_check_patch_state | to_nice_json }}\n"
+    dest: "{{ health_check_state_dir }}/{{ inventory_hostname }}.json"
+    mode: "0640"
+  delegate_to: localhost
+  become: false
+  when: health_check_patch_counts_trusted | bool
+  changed_when: false
+
+- name: Publish pending-security timing facts
+  ansible.builtin.set_fact:
+    health_check_security_pending_since_at: >-
+      {{ health_check_patch_state.pending_since_at | default(none) }}
+    health_check_security_pending_since_epoch: >-
+      {{ health_check_patch_state.pending_since_epoch | default(0) | int }}
+    health_check_security_pending_age_hours: >-
+      {{
+        (
+          (
+            health_check_observed_epoch | int
+            - health_check_patch_state.pending_since_epoch | default(0) | int
+          ) / 3600
+        )
+        | round(1)
+        if health_check_patch_state.pending_since_epoch
+          | default(0)
+          | int > 0
+        else none
+      }}
+  changed_when: false

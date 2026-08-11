@@ -15,6 +15,7 @@ health_check_load_warning_per_cpu: 1.0
 health_check_load_critical_per_cpu: 2.0
 
 health_check_report_dir: "{{ playbook_dir }}/../reports"
+health_check_state_dir: "{{ playbook_dir }}/../.state/health_check"
 
 # Exact systemd unit names that should not produce warnings.
 health_check_failed_service_allowlist: []

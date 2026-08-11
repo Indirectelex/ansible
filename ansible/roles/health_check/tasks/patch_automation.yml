@@ -1,0 +1,188 @@
+---
+- name: Inspect existing operating-system update automation
+  ansible.builtin.shell: |
+    set -o pipefail
+
+    package_status="$(
+      dpkg-query --show --showformat='${db:Status-Abbrev}' \
+        unattended-upgrades 2>/dev/null || true
+    )"
+    periodic="$(
+      apt-config shell \
+        UPDATE_LISTS APT::Periodic::Update-Package-Lists/i \
+        UNATTENDED APT::Periodic::Unattended-Upgrade/i \
+        AUTO_REBOOT Unattended-Upgrade::Automatic-Reboot/b \
+        2>/dev/null || true
+    )"
+    update_lists="$(
+      sed -n "s/^UPDATE_LISTS='\(.*\)'$/\1/p" <<< "$periodic"
+    )"
+    unattended="$(
+      sed -n "s/^UNATTENDED='\(.*\)'$/\1/p" <<< "$periodic"
+    )"
+    auto_reboot="$(
+      sed -n "s/^AUTO_REBOOT='\(.*\)'$/\1/p" <<< "$periodic"
+    )"
+
+    timer_enabled="$(
+      systemctl is-enabled apt-daily-upgrade.timer 2>/dev/null || true
+    )"
+    timer_active="$(
+      systemctl is-active apt-daily-upgrade.timer 2>/dev/null || true
+    )"
+    next_raw="$(
+      systemctl show apt-daily-upgrade.timer \
+        --property=NextElapseUSecRealtime --value 2>/dev/null || true
+    )"
+    next_at=""
+    next_epoch="0"
+    if [[ -n "$next_raw" ]]; then
+      next_at="$(
+        date --date="$next_raw" --iso-8601=seconds 2>/dev/null || true
+      )"
+      next_epoch="$(
+        date --date="$next_raw" +%s 2>/dev/null || true
+      )"
+    fi
+
+    service_active="$(
+      systemctl show apt-daily-upgrade.service \
+        --property=ActiveState --value 2>/dev/null || true
+    )"
+    last_result="$(
+      systemctl show apt-daily-upgrade.service \
+        --property=Result --value 2>/dev/null || true
+    )"
+    last_exit_status="$(
+      systemctl show apt-daily-upgrade.service \
+        --property=ExecMainStatus --value 2>/dev/null || true
+    )"
+    last_raw="$(
+      systemctl show apt-daily-upgrade.service \
+        --property=ExecMainStartTimestamp --value 2>/dev/null || true
+    )"
+    last_at=""
+    last_epoch="0"
+    if [[ -n "$last_raw" ]]; then
+      last_at="$(
+        date --date="$last_raw" --iso-8601=seconds 2>/dev/null || true
+      )"
+      last_epoch="$(
+        date --date="$last_raw" +%s 2>/dev/null || true
+      )"
+    fi
+
+    security_origins=false
+    if apt-config dump 2>/dev/null \
+      | grep -Ei \
+        'Unattended-Upgrade::(Allowed-Origins|Origins-Pattern).*-security' \
+        >/dev/null; then
+      security_origins=true
+    fi
+
+    printf '%s\n' \
+      "package_status=$package_status" \
+      "update_lists=$update_lists" \
+      "unattended=$unattended" \
+      "automatic_reboot=${auto_reboot:-false}" \
+      "security_origins=$security_origins" \
+      "timer_enabled=$timer_enabled" \
+      "timer_active=$timer_active" \
+      "next_attempt_at=$next_at" \
+      "next_attempt_epoch=${next_epoch:-0}" \
+      "service_active=$service_active" \
+      "last_result=$last_result" \
+      "last_exit_status=${last_exit_status:-0}" \
+      "last_attempt_at=$last_at" \
+      "last_attempt_epoch=${last_epoch:-0}"
+  args:
+    executable: /bin/bash
+  environment:
+    LC_ALL: C
+  register: health_check_os_update_automation_raw
+  changed_when: false
+  failed_when: false
+
+- name: Parse operating-system update automation evidence
+  ansible.builtin.set_fact:
+    health_check_os_update_evidence: >-
+      {{
+        health_check_os_update_automation_raw.stdout_lines
+        | default([])
+        | health_check_parse_key_values
+      }}
+  changed_when: false
+
+- name: Determine operating-system security automation status
+  ansible.builtin.set_fact:
+    health_check_os_update_automation_enabled: >-
+      {{
+        health_check_os_update_evidence.package_status
+        | default('')
+        | trim == 'ii'
+        and health_check_os_update_evidence.unattended
+        | default('0') == '1'
+        and health_check_os_update_evidence.security_origins
+        | default('false') == 'true'
+        and health_check_os_update_evidence.timer_enabled
+        | default('') == 'enabled'
+      }}
+    health_check_os_metadata_automation_enabled: >-
+      {{
+        health_check_os_update_evidence.update_lists
+        | default('0') == '1'
+      }}
+    health_check_os_update_automation_provider: >-
+      {{
+        'unattended_upgrades'
+        if (
+          health_check_os_update_evidence.package_status
+          | default('')
+          | trim == 'ii'
+        )
+        else 'none'
+      }}
+    health_check_os_update_service_active: >-
+      {{
+        health_check_os_update_evidence.service_active
+        | default('inactive') == 'active'
+      }}
+    health_check_os_update_last_result: >-
+      {{ health_check_os_update_evidence.last_result | default('unknown') }}
+    health_check_os_update_last_exit_status: >-
+      {{
+        health_check_os_update_evidence.last_exit_status
+        | default(0)
+        | int
+      }}
+    health_check_os_update_last_attempt_at: >-
+      {{
+        health_check_os_update_evidence.last_attempt_at
+        | default('')
+        or none
+      }}
+    health_check_os_update_last_attempt_epoch: >-
+      {{
+        health_check_os_update_evidence.last_attempt_epoch
+        | default(0)
+        | int
+      }}
+    health_check_os_update_next_attempt_at: >-
+      {{
+        health_check_os_update_evidence.next_attempt_at
+        | default('')
+        or none
+      }}
+    health_check_os_update_next_attempt_epoch: >-
+      {{
+        health_check_os_update_evidence.next_attempt_epoch
+        | default(0)
+        | int
+      }}
+    health_check_os_update_automatic_reboot: >-
+      {{
+        health_check_os_update_evidence.automatic_reboot
+        | default('false')
+        | lower == 'true'
+      }}
+  changed_when: false

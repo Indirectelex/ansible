@@ -25,6 +25,9 @@ Patch posture: **{{ health_check_report.patch_posture_status }}**
 ## Security and maintenance
 
 - Patch policy: {{ health_check_report.patch_policy }}
+- OS security automation enabled: {{ health_check_report.os_update_automation_enabled }}
+- OS update automation provider: {{ health_check_report.os_update_automation_provider }}
+- Automatic reboot enabled: {{ health_check_report.os_update_automatic_reboot }}
 - Updates detected in cache: {{ health_check_report.updates_available }}
 - Security updates detected: {{ health_check_report.security_updates_available }}
 - Regular updates detected: {{ health_check_report.regular_updates_available }}
@@ -42,6 +45,18 @@ Patch posture: **{{ health_check_report.patch_posture_status }}**
 - APT check return code: {{ health_check_report.apt_check_rc }}
 - APT collection failed: {{ health_check_report.apt_collection_failed }}
 - Reboot required: {{ health_check_report.reboot_required }}
+{% if health_check_report.security_pending_since_at is not none %}
+- Security updates pending since: {{ health_check_report.security_pending_since_at }}
+- Security pending age: {{ health_check_report.security_pending_age_hours }} hours
+{% else %}
+- Security updates pending since: Not pending
+{% endif %}
+{% if health_check_report.os_update_automation_enabled | bool %}
+- Automatic installer running: {{ health_check_report.os_update_service_active }}
+- Last automatic attempt: {{ health_check_report.os_update_last_attempt_at | default('Unknown', true) }}
+- Last automatic result: {{ health_check_report.os_update_last_result }} (exit {{ health_check_report.os_update_last_exit_status }})
+- Next automatic attempt: {{ health_check_report.os_update_next_attempt_at | default('Unknown', true) }}
+{% endif %}
 
 {% if health_check_report.patch_status_reasons | length > 0 %}
 Patch posture reasons:

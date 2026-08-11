@@ -194,11 +194,42 @@
         and health_check_apt_metadata_status == 'FRESH'
         and health_check_apt_security_metadata_observed | bool
       }}
+  changed_when: false
+
+- name: Inspect existing operating-system patch automation
+  ansible.builtin.include_tasks: patch_automation.yml
+
+- name: Track when active security updates were first detected
+  ansible.builtin.include_tasks: patch_state.yml
+
+- name: Determine patch ownership and automatic-attempt evidence
+  ansible.builtin.set_fact:
     health_check_patch_policy: >-
       {{
         'all_security_manual_approval'
         if inventory_hostname in groups.get('proxmox_hosts', [])
+        else 'os_managed_security'
+        if health_check_os_update_automation_enabled | bool
         else 'monitor_only'
+      }}
+    health_check_automation_attempt_after_detection: >-
+      {{
+        health_check_os_update_last_attempt_epoch | int > 0
+        and health_check_security_pending_since_epoch | int > 0
+        and health_check_os_update_last_attempt_epoch | int
+          > health_check_security_pending_since_epoch | int
+      }}
+    health_check_automation_failed_after_detection: >-
+      {{
+        health_check_os_update_automation_enabled | bool
+        and health_check_os_update_last_attempt_epoch | int > 0
+        and health_check_security_pending_since_epoch | int > 0
+        and health_check_os_update_last_attempt_epoch | int
+          > health_check_security_pending_since_epoch | int
+        and (
+          health_check_os_update_last_result != 'success'
+          or health_check_os_update_last_exit_status | int != 0
+        )
       }}
   changed_when: false
 
@@ -206,25 +237,103 @@
   ansible.builtin.set_fact:
     health_check_patch_posture_status: >-
       {{
-        'ERROR'
-        if health_check_apt.rc | default(1) | int != 0
-        else 'REVIEW_REQUIRED'
-        if health_check_review_required_count | int > 0
-        else 'ACTION_NEEDED'
-        if health_check_security_update_count | int > 0
-        else 'DATA_STALE'
-        if not health_check_patch_counts_trusted | bool
-        else 'REBOOT_PENDING'
-        if health_check_reboot_required.stat.exists | bool
-        else 'ROUTINE_MAINTENANCE'
-        if health_check_regular_update_count | int > 0
-        else 'CURRENT'
+        health_check_apt.rc
+        | default(1)
+        | health_check_determine_patch_posture(
+            health_check_patch_counts_trusted,
+            health_check_security_update_count,
+            health_check_review_required_count,
+            health_check_reboot_required.stat.exists,
+            health_check_regular_update_count,
+            health_check_os_update_automation_enabled,
+            health_check_os_update_service_active,
+            health_check_automation_attempt_after_detection,
+            health_check_automation_failed_after_detection
+          )
       }}
   changed_when: false
 
 - name: Initialize patch-posture reasons
   ansible.builtin.set_fact:
     health_check_patch_status_reasons: []
+  changed_when: false
+
+- name: Add operating-system automation patch reason
+  ansible.builtin.set_fact:
+    health_check_patch_status_reasons: >-
+      {{
+        health_check_patch_status_reasons
+        + [
+          'Security installation is managed by '
+          ~ health_check_os_update_automation_provider
+        ]
+      }}
+  when: health_check_os_update_automation_enabled | bool
+  changed_when: false
+
+- name: Add pending-since patch reason
+  ansible.builtin.set_fact:
+    health_check_patch_status_reasons: >-
+      {{
+        health_check_patch_status_reasons
+        + [
+          'Security updates first detected '
+          ~ (health_check_security_pending_since_at | string)
+        ]
+      }}
+  when:
+    - health_check_security_update_count | int > 0
+    - health_check_security_pending_since_at is not none
+  changed_when: false
+
+- name: Add scheduled automatic-attempt patch reason
+  ansible.builtin.set_fact:
+    health_check_patch_status_reasons: >-
+      {{
+        health_check_patch_status_reasons
+        + [
+          'Next automatic attempt '
+          ~ (
+            health_check_os_update_next_attempt_at
+            | default('unknown', true)
+            | string
+          )
+        ]
+      }}
+  when: health_check_patch_posture_status == 'SCHEDULED'
+  changed_when: false
+
+- name: Add automatic installer running patch reason
+  ansible.builtin.set_fact:
+    health_check_patch_status_reasons: >-
+      {{
+        health_check_patch_status_reasons
+        + ['Automatic installer is running']
+      }}
+  when: health_check_patch_posture_status == 'INSTALLING'
+  changed_when: false
+
+- name: Add overdue automatic-attempt patch reason
+  ansible.builtin.set_fact:
+    health_check_patch_status_reasons: >-
+      {{
+        health_check_patch_status_reasons
+        + ['Security updates remain after a successful automatic attempt']
+      }}
+  when: health_check_patch_posture_status == 'AUTOMATION_OVERDUE'
+  changed_when: false
+
+- name: Add automatic-attempt failure patch reason
+  ansible.builtin.set_fact:
+    health_check_patch_status_reasons: >-
+      {{
+        health_check_patch_status_reasons
+        + [
+          'Automatic update attempt failed with result '
+          ~ (health_check_os_update_last_result | string)
+        ]
+      }}
+  when: health_check_patch_posture_status == 'AUTOMATION_ERROR'
   changed_when: false
 
 - name: Add APT failure patch reason

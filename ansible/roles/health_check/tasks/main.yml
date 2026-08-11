@@ -179,7 +179,7 @@
 - name: Assemble structured health report
   ansible.builtin.set_fact:
     health_check_report:
-      generated_at: "{{ lookup('pipe', 'date --iso-8601=seconds') }}"
+      generated_at: "{{ health_check_observed_at }}"
       host: "{{ inventory_hostname }}"
       status: "{{ health_check_overall_status }}"
       operating_system: >-
@@ -214,6 +214,30 @@
       patch_posture_status: "{{ health_check_patch_posture_status }}"
       patch_status_reasons: "{{ health_check_patch_status_reasons }}"
       patch_policy: "{{ health_check_patch_policy }}"
+      security_pending_since_at: >-
+        {{ health_check_security_pending_since_at }}
+      security_pending_since_epoch: >-
+        {{ health_check_security_pending_since_epoch }}
+      security_pending_age_hours: >-
+        {{ health_check_security_pending_age_hours }}
+      os_update_automation_enabled: >-
+        {{ health_check_os_update_automation_enabled }}
+      os_metadata_automation_enabled: >-
+        {{ health_check_os_metadata_automation_enabled }}
+      os_update_automation_provider: >-
+        {{ health_check_os_update_automation_provider }}
+      os_update_service_active: >-
+        {{ health_check_os_update_service_active }}
+      os_update_last_attempt_at: >-
+        {{ health_check_os_update_last_attempt_at }}
+      os_update_last_result: >-
+        {{ health_check_os_update_last_result }}
+      os_update_last_exit_status: >-
+        {{ health_check_os_update_last_exit_status }}
+      os_update_next_attempt_at: >-
+        {{ health_check_os_update_next_attempt_at }}
+      os_update_automatic_reboot: >-
+        {{ health_check_os_update_automatic_reboot }}
       reboot_required: "{{ health_check_reboot_required.stat.exists }}"
       time_synchronized: "{{ health_check_time_sync.stdout | default('unknown') }}"
       disk_details: "{{ health_check_disk.stdout }}"

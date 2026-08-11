@@ -17,21 +17,29 @@ const healthSeverityOrder = {
 
 const patchSeverityOrder = {
   ERROR: 0,
-  REVIEW_REQUIRED: 1,
-  ACTION_NEEDED: 2,
-  DATA_STALE: 3,
-  REBOOT_PENDING: 4,
-  ROUTINE_MAINTENANCE: 5,
-  UNKNOWN: 6,
-  CURRENT: 7,
+  AUTOMATION_ERROR: 1,
+  AUTOMATION_OVERDUE: 2,
+  REVIEW_REQUIRED: 3,
+  ACTION_NEEDED: 4,
+  DATA_STALE: 5,
+  REBOOT_PENDING: 6,
+  INSTALLING: 7,
+  SCHEDULED: 8,
+  ROUTINE_MAINTENANCE: 9,
+  UNKNOWN: 10,
+  CURRENT: 11,
 };
 
 const patchLabels = {
   ERROR: "Data error",
+  AUTOMATION_ERROR: "Automation error",
+  AUTOMATION_OVERDUE: "Automation overdue",
   REVIEW_REQUIRED: "Review required",
   ACTION_NEEDED: "Action needed",
   DATA_STALE: "Data stale",
   REBOOT_PENDING: "Reboot pending",
+  INSTALLING: "Installing",
+  SCHEDULED: "Scheduled",
   ROUTINE_MAINTENANCE: "Routine maintenance",
   UNKNOWN: "Unknown",
   CURRENT: "Current",
@@ -236,6 +244,39 @@ function renderPatchPanel(report) {
   const status = patchStatusName(report.patch_posture_status);
   const trusted = report.patch_counts_trusted === true;
   const staleClass = trusted ? "" : "metric-untrusted";
+  const rows = [
+    ["Security updates", securityCountDisplay(report), staleClass],
+    [
+      "Regular updates",
+      String(numberValue(report.regular_updates_available)),
+      staleClass,
+    ],
+    ["Review required", String(numberValue(report.review_required))],
+    ["Restart-sensitive", String(numberValue(report.restart_sensitive))],
+    ["Reboot required", report.reboot_required ? "Yes" : "No"],
+    [
+      "Package metadata",
+      `${metadataAge(report)} · ${report.package_metadata_status || "UNKNOWN"}`,
+      staleClass,
+    ],
+  ];
+
+  if (report.os_update_automation_enabled === true) {
+    rows.push(
+      ["Pending since", formatDate(report.security_pending_since_at)],
+      ["Next automatic attempt", formatDate(report.os_update_next_attempt_at)],
+      [
+        "Last automatic attempt",
+        report.os_update_last_attempt_at
+          ? `${formatDate(report.os_update_last_attempt_at)} · ${report.os_update_last_result || "unknown"}`
+          : "No recorded attempt",
+      ],
+      [
+        "Automatic reboot",
+        report.os_update_automatic_reboot ? "Enabled" : "No",
+      ],
+    );
+  }
 
   return `
     <section class="status-panel patch-panel ${patchStatusClass(status)}">
@@ -246,22 +287,7 @@ function renderPatchPanel(report) {
         </span>
       </div>
 
-      ${renderRows([
-        ["Security updates", securityCountDisplay(report), staleClass],
-        [
-          "Regular updates",
-          String(numberValue(report.regular_updates_available)),
-          staleClass,
-        ],
-        ["Review required", String(numberValue(report.review_required))],
-        ["Restart-sensitive", String(numberValue(report.restart_sensitive))],
-        ["Reboot required", report.reboot_required ? "Yes" : "No"],
-        [
-          "Package metadata",
-          `${metadataAge(report)} · ${report.package_metadata_status || "UNKNOWN"}`,
-          staleClass,
-        ],
-      ])}
+      ${renderRows(rows)}
 
       ${
         trusted
@@ -275,6 +301,18 @@ function renderPatchPanel(report) {
       }
     </section>
   `;
+}
+
+function patchPolicyLabel(report) {
+  if (report.patch_policy === "all_security_manual_approval") {
+    return "Manual approval";
+  }
+
+  if (report.patch_policy === "os_managed_security") {
+    return "OS security automation enabled";
+  }
+
+  return "Monitor only";
 }
 
 function packageGroupMarkup(label, packages, className) {
@@ -356,11 +394,7 @@ function renderHostCard(report) {
           </p>
         </div>
         <span class="host-policy">
-          ${escapeHtml(
-            report.patch_policy === "all_security_manual_approval"
-              ? "Manual approval"
-              : "Monitor only",
-          )}
+          ${escapeHtml(patchPolicyLabel(report))}
         </span>
       </div>
 
@@ -399,13 +433,21 @@ function renderFleetSummary(reports) {
       total + numberValue(report.security_updates_available),
     0,
   );
-  const securityHosts = reports.filter(
-    (report) => numberValue(report.security_updates_available) > 0,
+  const manualSecurityHosts = reports.filter(
+    (report) =>
+      numberValue(report.security_updates_available) > 0 &&
+      report.os_update_automation_enabled !== true,
   ).length;
-  const reviewRequired = reports.reduce(
-    (total, report) => total + numberValue(report.review_required),
-    0,
-  );
+  const osManagedSecurityHosts = reports.filter(
+    (report) =>
+      numberValue(report.security_updates_available) > 0 &&
+      report.os_update_automation_enabled === true,
+  ).length;
+  const automationAttention = reports.filter((report) =>
+    ["AUTOMATION_OVERDUE", "AUTOMATION_ERROR"].includes(
+      patchStatusName(report.patch_posture_status),
+    ),
+  ).length;
   const reboots = reports.filter((report) => report.reboot_required).length;
   const freshHosts = reports.filter(
     (report) =>
@@ -416,8 +458,9 @@ function renderFleetSummary(reports) {
 
   const cards = [
     ["Security updates detected", securityUpdates, "summary-action"],
-    ["Hosts needing security patches", securityHosts, "summary-action"],
-    ["Review-required patches", reviewRequired, "summary-review"],
+    ["Hosts needing manual patching", manualSecurityHosts, "summary-review"],
+    ["OS-managed pending hosts", osManagedSecurityHosts, "summary-scheduled"],
+    ["Automation needing attention", automationAttention, "summary-error"],
     ["Reboots required", reboots, "summary-reboot"],
     ["Fresh package metadata", `${freshHosts} / ${reports.length}`, "summary-fresh"],
   ];
@@ -753,7 +796,7 @@ async function loadReport(entry) {
     return {...report, host: report.host || entry.id};
   } catch (error) {
     return {
-      schema_version: 2,
+      schema_version: 3,
       report_type: "host_health",
       host: entry.id,
       generated_at: null,

@@ -32,6 +32,9 @@
   --patch-stale: #76623a;
   --patch-error: #b3261e;
   --patch-reboot: #8b5c00;
+  --patch-scheduled: #376f91;
+  --patch-installing: #167c80;
+  --patch-overdue: #c24f00;
 
   --shadow:
     0 1px 2px rgb(0 0 0 / 6%),
@@ -63,6 +66,9 @@
     --patch-stale: #d6bd84;
     --patch-error: #ff8f88;
     --patch-reboot: #ffd07a;
+    --patch-scheduled: #8bc8ec;
+    --patch-installing: #5cc4c8;
+    --patch-overdue: #ff9b63;
 
     --shadow:
       0 1px 2px rgb(0 0 0 / 25%),
@@ -177,7 +183,7 @@ h1 {
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -219,6 +225,14 @@ h1 {
 
 .summary-fresh {
   border-top-color: var(--patch-current);
+}
+
+.summary-scheduled {
+  border-top-color: var(--patch-scheduled);
+}
+
+.summary-error {
+  border-top-color: var(--patch-error);
 }
 
 .fleet-warning,
@@ -321,6 +335,22 @@ h1 {
   border-top-color: var(--patch-reboot);
 }
 
+.host-card.patch-scheduled {
+  border-top-color: var(--patch-scheduled);
+}
+
+.host-card.patch-installing {
+  border-top-color: var(--patch-installing);
+}
+
+.host-card.patch-automation-overdue {
+  border-top-color: var(--patch-overdue);
+}
+
+.host-card.patch-automation-error {
+  border-top-color: var(--patch-error);
+}
+
 .host-card.status-critical,
 .host-card.status-unreachable {
   color: var(--text);
@@ -415,6 +445,22 @@ h1 {
   border-top-color: var(--patch-reboot);
 }
 
+.patch-panel.patch-scheduled {
+  border-top-color: var(--patch-scheduled);
+}
+
+.patch-panel.patch-installing {
+  border-top-color: var(--patch-installing);
+}
+
+.patch-panel.patch-automation-overdue {
+  border-top-color: var(--patch-overdue);
+}
+
+.patch-panel.patch-automation-error {
+  border-top-color: var(--patch-error);
+}
+
 .status-panel-heading {
   align-items: center;
   margin-bottom: 13px;
@@ -487,6 +533,22 @@ h1 {
 
 .patch-reboot-pending {
   color: var(--patch-reboot);
+}
+
+.patch-scheduled {
+  color: var(--patch-scheduled);
+}
+
+.patch-installing {
+  color: var(--patch-installing);
+}
+
+.patch-automation-overdue {
+  color: var(--patch-overdue);
+}
+
+.patch-automation-error {
+  color: var(--patch-error);
 }
 
 /* Status classes color badges; cards and panels keep neutral body text. */

@@ -338,6 +338,38 @@
             else 'OK'
           }}
 
+      - id: security_pending_age
+        label: Security pending age
+        category: maintenance
+        value: >-
+          {{
+            health_check_report.security_pending_age_hours
+            if health_check_report.security_pending_age_hours is not none
+            else 'Not pending'
+          }}
+        unit: hours
+        display: number
+        order: 66
+        status: >-
+          {{
+            'WARNING'
+            if health_check_report.security_updates_available | int > 0
+            else 'OK'
+          }}
+
+      - id: os_update_automation
+        label: OS security automation
+        category: maintenance
+        value: "{{ health_check_report.os_update_automation_enabled | bool }}"
+        display: boolean
+        order: 67
+        status: >-
+          {{
+            'OK'
+            if health_check_report.os_update_automation_enabled | bool
+            else 'UNKNOWN'
+          }}
+
       - id: failed_services
         label: Failed services
         category: services
@@ -417,6 +449,42 @@
         display: preformatted
         order: 120
         content: "{{ health_check_report.uptime_details | default('') }}"
+  changed_when: false
+
+- name: Add operating-system update automation section
+  ansible.builtin.set_fact:
+    health_check_dashboard_sections: >-
+      {{
+        health_check_dashboard_sections
+        + [
+          {
+            'id': 'os_update_automation',
+            'label': 'Operating-system update automation',
+            'category': 'maintenance',
+            'display': 'table',
+            'order': 15,
+            'items': [
+              {
+                'provider':
+                  health_check_report.os_update_automation_provider,
+                'security_enabled':
+                  health_check_report.os_update_automation_enabled,
+                'automatic_reboot':
+                  health_check_report.os_update_automatic_reboot,
+                'pending_since':
+                  health_check_report.security_pending_since_at,
+                'last_attempt':
+                  health_check_report.os_update_last_attempt_at,
+                'last_result':
+                  health_check_report.os_update_last_result,
+                'next_attempt':
+                  health_check_report.os_update_next_attempt_at
+              }
+            ]
+          }
+        ]
+      }}
+  when: health_check_report.os_update_automation_enabled | bool
   changed_when: false
 
 - name: Add Docker dashboard section
@@ -548,7 +616,7 @@
         health_check_report
         | combine(
             {
-              'schema_version': 2,
+              'schema_version': 3,
               'report_type': 'host_health',
               'health_status': health_check_report.status,
               'health_status_reasons': health_check_status_reasons,
