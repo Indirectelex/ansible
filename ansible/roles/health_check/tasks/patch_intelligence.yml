@@ -1,0 +1,308 @@
+---
+- name: Check APT update success timestamp
+  ansible.builtin.stat:
+    path: /var/lib/apt/periodic/update-success-stamp
+  register: health_check_apt_update_stamp
+
+- name: Find cached APT release metadata
+  ansible.builtin.find:
+    paths: /var/lib/apt/lists
+    patterns:
+      - "*_InRelease"
+      - "*_Release"
+    file_type: file
+    recurse: false
+  register: health_check_apt_metadata_files
+
+- name: Read target epoch time
+  ansible.builtin.command:
+    argv:
+      - date
+      - +%s
+  register: health_check_target_epoch
+  changed_when: false
+
+- name: Collect APT metadata timestamp candidates
+  ansible.builtin.set_fact:
+    health_check_apt_metadata_mtimes: >-
+      {{
+        health_check_apt_metadata_files.files
+        | default([])
+        | map(attribute='mtime')
+        | list
+      }}
+    health_check_apt_security_metadata_mtimes: >-
+      {{
+        health_check_apt_metadata_files.files
+        | default([])
+        | selectattr('path', 'search', '(?i)security')
+        | map(attribute='mtime')
+        | list
+      }}
+  changed_when: false
+
+- name: Calculate APT metadata epochs
+  ansible.builtin.set_fact:
+    health_check_apt_update_stamp_epoch: >-
+      {{
+        health_check_apt_update_stamp.stat.mtime | float
+        if health_check_apt_update_stamp.stat.exists | default(false) | bool
+        else 0
+      }}
+    health_check_apt_security_metadata_epoch: >-
+      {{
+        health_check_apt_security_metadata_mtimes | max | float
+        if health_check_apt_security_metadata_mtimes | length > 0
+        else 0
+      }}
+    health_check_apt_repository_metadata_epoch: >-
+      {{
+        health_check_apt_metadata_mtimes | max | float
+        if health_check_apt_metadata_mtimes | length > 0
+        else 0
+      }}
+    health_check_apt_security_metadata_observed: >-
+      {{
+        health_check_apt_security_metadata_mtimes | length > 0
+      }}
+  changed_when: false
+
+- name: Select newest APT metadata evidence
+  ansible.builtin.set_fact:
+    health_check_apt_metadata_epoch: >-
+      {{
+        (
+          [
+            health_check_apt_update_stamp_epoch | float,
+            health_check_apt_security_metadata_epoch | float
+          ]
+          | max
+        )
+        if health_check_apt_security_metadata_observed | bool
+        else
+        (
+          [
+            health_check_apt_update_stamp_epoch | float,
+            health_check_apt_repository_metadata_epoch | float
+          ]
+          | max
+        )
+      }}
+    health_check_apt_metadata_source: >-
+      {{
+        'unknown'
+        if (
+          health_check_apt_update_stamp_epoch | float == 0
+          and health_check_apt_security_metadata_epoch | float == 0
+          and health_check_apt_repository_metadata_epoch | float == 0
+        )
+        else 'apt_update_success_stamp'
+        if (
+          health_check_apt_update_stamp_epoch | float
+          >= health_check_apt_security_metadata_epoch | float
+          and health_check_apt_update_stamp_epoch | float
+          >= health_check_apt_repository_metadata_epoch | float
+        )
+        else 'security_repository_index'
+        if health_check_apt_security_metadata_observed | bool
+        else 'repository_index'
+      }}
+  changed_when: false
+
+- name: Calculate APT metadata age
+  ansible.builtin.set_fact:
+    health_check_apt_metadata_age_hours: >-
+      {{
+        (
+          [
+            0,
+            (
+              health_check_target_epoch.stdout | int
+              - health_check_apt_metadata_epoch | float
+            ) / 3600
+          ]
+          | max
+          | round(1)
+        )
+        if health_check_apt_metadata_epoch | float > 0
+        else -1
+      }}
+  changed_when: false
+
+- name: Determine APT metadata freshness
+  ansible.builtin.set_fact:
+    health_check_apt_metadata_status: >-
+      {{
+        'UNKNOWN'
+        if health_check_apt_metadata_age_hours | float < 0
+        else 'STALE'
+        if (
+          health_check_apt_metadata_age_hours | float
+          > health_check_apt_metadata_stale_hours | float
+        )
+        else 'FRESH'
+      }}
+  changed_when: false
+
+- name: Classify cached APT upgrade candidates
+  ansible.builtin.set_fact:
+    health_check_patch_intelligence: >-
+      {{
+        (
+          health_check_apt.stdout_lines
+          | default([])
+          | health_check_classify_apt_updates(
+              health_check_security_origin_patterns,
+              health_check_patch_review_rules,
+              health_check_patch_restart_rules
+            )
+        )
+        if health_check_apt.rc | default(1) | int == 0
+        else {
+          'updates_available': 0,
+          'security_updates_available': 0,
+          'regular_updates_available': 0,
+          'review_required': 0,
+          'restart_sensitive': 0,
+          'standard_security': 0,
+          'security_packages': {
+            'review_required': [],
+            'restart_sensitive': [],
+            'standard_security': []
+          }
+        }
+      }}
+  changed_when: false
+
+- name: Publish patch-intelligence facts
+  ansible.builtin.set_fact:
+    health_check_security_update_count: >-
+      {{ health_check_patch_intelligence.security_updates_available | int }}
+    health_check_regular_update_count: >-
+      {{ health_check_patch_intelligence.regular_updates_available | int }}
+    health_check_review_required_count: >-
+      {{ health_check_patch_intelligence.review_required | int }}
+    health_check_restart_sensitive_count: >-
+      {{ health_check_patch_intelligence.restart_sensitive | int }}
+    health_check_standard_security_count: >-
+      {{ health_check_patch_intelligence.standard_security | int }}
+    health_check_security_packages: >-
+      {{ health_check_patch_intelligence.security_packages }}
+    health_check_patch_counts_trusted: >-
+      {{
+        health_check_apt.rc | default(1) | int == 0
+        and health_check_apt_metadata_status == 'FRESH'
+        and health_check_apt_security_metadata_observed | bool
+      }}
+    health_check_patch_policy: >-
+      {{
+        'all_security_manual_approval'
+        if inventory_hostname in groups.get('proxmox_hosts', [])
+        else 'monitor_only'
+      }}
+  changed_when: false
+
+- name: Determine patch-posture status
+  ansible.builtin.set_fact:
+    health_check_patch_posture_status: >-
+      {{
+        'ERROR'
+        if health_check_apt.rc | default(1) | int != 0
+        else 'REVIEW_REQUIRED'
+        if health_check_review_required_count | int > 0
+        else 'ACTION_NEEDED'
+        if health_check_security_update_count | int > 0
+        else 'DATA_STALE'
+        if not health_check_patch_counts_trusted | bool
+        else 'REBOOT_PENDING'
+        if health_check_reboot_required.stat.exists | bool
+        else 'ROUTINE_MAINTENANCE'
+        if health_check_regular_update_count | int > 0
+        else 'CURRENT'
+      }}
+  changed_when: false
+
+- name: Initialize patch-posture reasons
+  ansible.builtin.set_fact:
+    health_check_patch_status_reasons: []
+  changed_when: false
+
+- name: Add APT failure patch reason
+  ansible.builtin.set_fact:
+    health_check_patch_status_reasons: >-
+      {{ health_check_patch_status_reasons + ['APT simulation failed'] }}
+  when: health_check_apt.rc | default(1) | int != 0
+  changed_when: false
+
+- name: Add review-required patch reason
+  ansible.builtin.set_fact:
+    health_check_patch_status_reasons: >-
+      {{
+        health_check_patch_status_reasons
+        + [
+          (health_check_review_required_count | string)
+          ~ ' infrastructure-sensitive security package(s)'
+        ]
+      }}
+  when: health_check_review_required_count | int > 0
+  changed_when: false
+
+- name: Add restart-sensitive patch reason
+  ansible.builtin.set_fact:
+    health_check_patch_status_reasons: >-
+      {{
+        health_check_patch_status_reasons
+        + [
+          (health_check_restart_sensitive_count | string)
+          ~ ' restart-sensitive security package(s)'
+        ]
+      }}
+  when: health_check_restart_sensitive_count | int > 0
+  changed_when: false
+
+- name: Add standard-security patch reason
+  ansible.builtin.set_fact:
+    health_check_patch_status_reasons: >-
+      {{
+        health_check_patch_status_reasons
+        + [
+          (health_check_standard_security_count | string)
+          ~ ' standard security package(s)'
+        ]
+      }}
+  when: health_check_standard_security_count | int > 0
+  changed_when: false
+
+- name: Add stale metadata patch reason
+  ansible.builtin.set_fact:
+    health_check_patch_status_reasons: >-
+      {{
+        health_check_patch_status_reasons
+        + [
+          'APT metadata is '
+          ~ (health_check_apt_metadata_status | lower)
+          ~ '; cached counts may be incomplete'
+        ]
+      }}
+  when: not health_check_patch_counts_trusted | bool
+  changed_when: false
+
+- name: Add reboot patch reason
+  ansible.builtin.set_fact:
+    health_check_patch_status_reasons: >-
+      {{ health_check_patch_status_reasons + ['Reboot already required'] }}
+  when: health_check_reboot_required.stat.exists | bool
+  changed_when: false
+
+- name: Add regular-update patch reason
+  ansible.builtin.set_fact:
+    health_check_patch_status_reasons: >-
+      {{
+        health_check_patch_status_reasons
+        + [
+          (health_check_regular_update_count | string)
+          ~ ' regular package update(s)'
+        ]
+      }}
+  when: health_check_regular_update_count | int > 0
+  changed_when: false

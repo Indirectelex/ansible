@@ -1,5 +1,5 @@
 ---
-- name: Initialize dashboard status reasons
+- name: Initialize health status reasons
   ansible.builtin.set_fact:
     health_check_status_reasons: []
   changed_when: false
@@ -96,26 +96,6 @@
   when: health_check_report.failed_service_count | int > 0
   changed_when: false
 
-- name: Add update status reason
-  ansible.builtin.set_fact:
-    health_check_status_reasons: >-
-      {{
-        health_check_status_reasons
-        + [
-          (health_check_report.updates_available | string)
-          ~ ' updates available'
-        ]
-      }}
-  when: health_check_report.updates_available | int > 0
-  changed_when: false
-
-- name: Add reboot status reason
-  ansible.builtin.set_fact:
-    health_check_status_reasons: >-
-      {{ health_check_status_reasons + ['Reboot required'] }}
-  when: health_check_report.reboot_required | bool
-  changed_when: false
-
 - name: Add time synchronization status reason
   ansible.builtin.set_fact:
     health_check_status_reasons: >-
@@ -128,13 +108,6 @@
       | string
       | lower
       != 'yes'
-  changed_when: false
-
-- name: Add APT collection failure reason
-  ansible.builtin.set_fact:
-    health_check_status_reasons: >-
-      {{ health_check_status_reasons + ['APT collection failed'] }}
-  when: health_check_report.apt_collection_failed | default(false) | bool
   changed_when: false
 
 - name: Add Docker collection failure reason
@@ -270,10 +243,98 @@
         unit: packages
         display: number
         order: 60
+        status: OK
+
+      - id: security_updates
+        label: Security updates
+        category: maintenance
+        value: >-
+          {{
+            health_check_report.security_updates_available
+            | default(0)
+            | int
+          }}
+        unit: packages
+        display: number
+        order: 61
         status: >-
           {{
             'WARNING'
-            if health_check_report.updates_available | int > 0
+            if (
+              health_check_report.security_updates_available
+              | default(0)
+              | int
+            ) > 0
+            else 'UNKNOWN'
+            if not (
+              health_check_report.patch_counts_trusted
+              | default(false)
+              | bool
+            )
+            else 'OK'
+          }}
+
+      - id: regular_updates
+        label: Regular updates
+        category: maintenance
+        value: >-
+          {{
+            health_check_report.regular_updates_available
+            | default(0)
+            | int
+          }}
+        unit: packages
+        display: number
+        order: 62
+        status: OK
+
+      - id: review_required
+        label: Review required
+        category: maintenance
+        value: "{{ health_check_report.review_required | default(0) | int }}"
+        unit: packages
+        display: number
+        order: 63
+        status: >-
+          {{
+            'WARNING'
+            if health_check_report.review_required | default(0) | int > 0
+            else 'OK'
+          }}
+
+      - id: restart_sensitive
+        label: Restart-sensitive
+        category: maintenance
+        value: >-
+          {{ health_check_report.restart_sensitive | default(0) | int }}
+        unit: packages
+        display: number
+        order: 64
+        status: >-
+          {{
+            'WARNING'
+            if health_check_report.restart_sensitive | default(0) | int > 0
+            else 'OK'
+          }}
+
+      - id: package_metadata_age
+        label: Package metadata age
+        category: maintenance
+        value: >-
+          {{
+            health_check_report.package_metadata_age_hours
+            if health_check_report.package_metadata_age_hours is not none
+            else 'Unknown'
+          }}
+        unit: hours
+        display: number
+        order: 65
+        status: >-
+          {{
+            'WARNING'
+            if health_check_report.package_metadata_status == 'STALE'
+            else 'UNKNOWN'
+            if health_check_report.package_metadata_status == 'UNKNOWN'
             else 'OK'
           }}
 
@@ -379,6 +440,78 @@
   when: health_check_report.docker_applicable | default(false) | bool
   changed_when: false
 
+- name: Add review-required security package section
+  ansible.builtin.set_fact:
+    health_check_dashboard_sections: >-
+      {{
+        health_check_dashboard_sections
+        + [
+          {
+            'id': 'security_review_required',
+            'label': 'Review-required security packages',
+            'category': 'maintenance',
+            'display': 'table',
+            'order': 20,
+            'items':
+              health_check_report.security_packages.review_required
+              | default([])
+          }
+        ]
+      }}
+  when: >-
+    health_check_report.security_packages.review_required
+    | default([])
+    | length > 0
+  changed_when: false
+
+- name: Add restart-sensitive security package section
+  ansible.builtin.set_fact:
+    health_check_dashboard_sections: >-
+      {{
+        health_check_dashboard_sections
+        + [
+          {
+            'id': 'security_restart_sensitive',
+            'label': 'Restart-sensitive security packages',
+            'category': 'maintenance',
+            'display': 'table',
+            'order': 30,
+            'items':
+              health_check_report.security_packages.restart_sensitive
+              | default([])
+          }
+        ]
+      }}
+  when: >-
+    health_check_report.security_packages.restart_sensitive
+    | default([])
+    | length > 0
+  changed_when: false
+
+- name: Add standard security package section
+  ansible.builtin.set_fact:
+    health_check_dashboard_sections: >-
+      {{
+        health_check_dashboard_sections
+        + [
+          {
+            'id': 'security_standard',
+            'label': 'Standard security packages',
+            'category': 'maintenance',
+            'display': 'table',
+            'order': 40,
+            'items':
+              health_check_report.security_packages.standard_security
+              | default([])
+          }
+        ]
+      }}
+  when: >-
+    health_check_report.security_packages.standard_security
+    | default([])
+    | length > 0
+  changed_when: false
+
 - name: Add Proxmox dashboard section
   ansible.builtin.set_fact:
     health_check_dashboard_sections: >-
@@ -415,9 +548,15 @@
         health_check_report
         | combine(
             {
-              'schema_version': 1,
+              'schema_version': 2,
               'report_type': 'host_health',
+              'health_status': health_check_report.status,
+              'health_status_reasons': health_check_status_reasons,
               'status_reasons': health_check_status_reasons,
+              'patch_posture_status':
+                health_check_report.patch_posture_status,
+              'patch_status_reasons':
+                health_check_report.patch_status_reasons,
               'metrics': health_check_dashboard_metrics,
               'sections': health_check_dashboard_sections
             },

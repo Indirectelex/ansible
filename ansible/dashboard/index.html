@@ -6,14 +6,14 @@
     name="viewport"
     content="width=device-width, initial-scale=1"
   >
-  <title>Infrastructure Health</title>
-  <link rel="stylesheet" href="assets/dashboard.css">
+  <title>Infrastructure Health &amp; Patch Posture</title>
+  <link rel="stylesheet" href="assets/dashboard.css?v=2">
 </head>
 <body>
   <header class="page-header">
     <div>
       <p class="eyebrow">Hackwell monitoring</p>
-      <h1>Infrastructure Health</h1>
+      <h1>Infrastructure Health &amp; Patch Posture</h1>
       <p id="dashboard-meta" class="muted">Loading reports…</p>
     </div>
 
@@ -21,6 +21,15 @@
       Refresh
     </button>
   </header>
+
+  <section
+    id="fleet-summary"
+    class="fleet-summary"
+    aria-label="Fleet patch summary"
+    aria-live="polite"
+  >
+    <div class="empty-state">Loading fleet summary…</div>
+  </section>
 
   <section class="toolbar" aria-label="Report filters">
     <label>
@@ -33,13 +42,28 @@
     </label>
 
     <label>
-      <span>Status</span>
-      <select id="status-filter">
-        <option value="ALL">All statuses</option>
+      <span>Health</span>
+      <select id="health-filter">
+        <option value="ALL">All health states</option>
         <option value="CRITICAL">Critical</option>
         <option value="WARNING">Warning</option>
         <option value="UNREACHABLE">Unreachable</option>
         <option value="OK">OK</option>
+        <option value="UNKNOWN">Unknown</option>
+      </select>
+    </label>
+
+    <label>
+      <span>Patch posture</span>
+      <select id="patch-filter">
+        <option value="ALL">All patch states</option>
+        <option value="ERROR">Data error</option>
+        <option value="REVIEW_REQUIRED">Review required</option>
+        <option value="ACTION_NEEDED">Action needed</option>
+        <option value="DATA_STALE">Data stale</option>
+        <option value="REBOOT_PENDING">Reboot pending</option>
+        <option value="ROUTINE_MAINTENANCE">Routine maintenance</option>
+        <option value="CURRENT">Current</option>
         <option value="UNKNOWN">Unknown</option>
       </select>
     </label>
@@ -68,6 +92,6 @@
     <div id="dialog-content"></div>
   </dialog>
 
-  <script src="assets/dashboard.js"></script>
+  <script src="assets/dashboard.js?v=2"></script>
 </body>
 </html>

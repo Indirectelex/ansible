@@ -57,8 +57,7 @@
         'WARNING'
         if (
           (
-            health_check_apt_collection_failed | bool
-            or health_check_docker_collection_failed | bool
+            health_check_docker_collection_failed | bool
             or health_check_proxmox_collection_failed | bool
             or health_check_proxmox_inactive_storage | length > 0
           )

@@ -21,3 +21,51 @@ health_check_failed_service_allowlist: []
 
 # Hosts may override this when they do not control their own system clock.
 health_check_require_time_sync: true
+
+# Cached APT metadata older than this is not trusted for security posture.
+health_check_apt_metadata_stale_hours: 48
+
+# Match repository pockets, not package names containing "security".
+health_check_security_origin_patterns:
+  - >-
+    (?i)\b(?:Debian-Security|Ubuntu):[^ )]+/[^ )]*-security\b
+
+# Security packages are classified by operational impact. First match wins.
+health_check_patch_review_rules:
+  - pattern: '^(?:linux-(?:image|modules|headers)|pve-kernel|proxmox-kernel)'
+    reason: Kernel package
+  - pattern: '^(?:grub|shim|initramfs-tools)'
+    reason: Boot stack
+  - pattern: '^(?:pve-|proxmox-|libpve-|qemu-server$|pve-manager$)'
+    reason: Proxmox platform
+  - pattern: '^(?:zfs|libzfs|ceph|libceph|librados|librbd)'
+    reason: Storage or clustered-storage stack
+  - pattern: '^(?:qemu|libvirt|lxc)'
+    reason: Virtualization stack
+  - pattern: >-
+      ^(?:ifupdown|network-manager$|netplan\.io$|nftables$|iptables$|openvswitch)
+    reason: Networking or firewall stack
+  - pattern: '^openssh-server$'
+    reason: Remote access service
+  - pattern: '^(?:docker|containerd|runc$)'
+    reason: Container runtime
+  - pattern: '^(?:mariadb|mysql|postgresql|redis-server$|mongodb)'
+    reason: Database engine
+  - pattern: '^(?:mdadm$|lvm2$|cryptsetup|multipath-tools$)'
+    reason: Core storage stack
+  - pattern: '^systemd(?:$|-)'
+    reason: Service and boot manager
+
+health_check_patch_restart_rules:
+  - pattern: '^(?:libc6|libc-bin)$'
+    reason: Core C runtime
+  - pattern: '^(?:openssl$|libssl)'
+    reason: Core cryptographic library
+  - pattern: '^libgnutls'
+    reason: Core cryptographic library
+  - pattern: '^(?:libsystemd|libudev)'
+    reason: Core service runtime library
+  - pattern: '^dbus'
+    reason: System message bus
+  - pattern: '^libpam'
+    reason: Authentication runtime library

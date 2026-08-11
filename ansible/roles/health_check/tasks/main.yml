@@ -71,6 +71,9 @@
   changed_when: false
   failed_when: false
 
+- name: Build read-only patch intelligence
+  ansible.builtin.include_tasks: patch_intelligence.yml
+
 - name: Collect Docker information
   ansible.builtin.command:
     argv:
@@ -169,8 +172,6 @@
           or health_check_inode_percent | int >= health_check_inode_warning_percent
           or health_check_memory_percent | float >= health_check_memory_warning_percent
           or health_check_failed_service_count | int > 0
-          or health_check_update_count | int > 0
-          or health_check_reboot_required.stat.exists
         )
         else 'OK'
       }}
@@ -193,6 +194,26 @@
       failed_service_count: "{{ health_check_failed_service_count }}"
       failed_services: "{{ health_check_failed_services.stdout_lines }}"
       updates_available: "{{ health_check_update_count }}"
+      security_updates_available: "{{ health_check_security_update_count }}"
+      regular_updates_available: "{{ health_check_regular_update_count }}"
+      review_required: "{{ health_check_review_required_count }}"
+      restart_sensitive: "{{ health_check_restart_sensitive_count }}"
+      standard_security: "{{ health_check_standard_security_count }}"
+      security_packages: "{{ health_check_security_packages }}"
+      package_metadata_age_hours: >-
+        {{
+          health_check_apt_metadata_age_hours
+          if health_check_apt_metadata_age_hours | float >= 0
+          else none
+        }}
+      package_metadata_status: "{{ health_check_apt_metadata_status }}"
+      package_metadata_source: "{{ health_check_apt_metadata_source }}"
+      package_metadata_stale_hours: >-
+        {{ health_check_apt_metadata_stale_hours }}
+      patch_counts_trusted: "{{ health_check_patch_counts_trusted }}"
+      patch_posture_status: "{{ health_check_patch_posture_status }}"
+      patch_status_reasons: "{{ health_check_patch_status_reasons }}"
+      patch_policy: "{{ health_check_patch_policy }}"
       reboot_required: "{{ health_check_reboot_required.stat.exists }}"
       time_synchronized: "{{ health_check_time_sync.stdout | default('unknown') }}"
       disk_details: "{{ health_check_disk.stdout }}"
@@ -252,10 +273,12 @@
 - name: Display health summary
   ansible.builtin.debug:
     msg: >-
-      {{ inventory_hostname }}: {{ health_check_overall_status }}
+      {{ inventory_hostname }}: Health {{ health_check_overall_status }}
+      | Patch {{ health_check_patch_posture_status }}
       | Disk {{ health_check_disk_percent }}%
       | Inodes {{ health_check_inode_percent }}%
       | Memory {{ health_check_memory_percent }}%
       | Failed services {{ health_check_failed_service_count }}
       | Updates {{ health_check_update_count }}
+      (security {{ health_check_security_update_count }})
       | Reboot {{ health_check_reboot_required.stat.exists }}

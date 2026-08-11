@@ -2,7 +2,9 @@
 
 Generated: {{ health_check_report.generated_at }}
 
-Status: **{{ health_check_report.status }}**
+Health status: **{{ health_check_report.status }}**
+
+Patch posture: **{{ health_check_report.patch_posture_status }}**
 
 ## System
 
@@ -16,13 +18,68 @@ Status: **{{ health_check_report.status }}**
 - Root inode usage: {{ health_check_report.root_inode_percent }}%
 - Memory usage: {{ health_check_report.memory_percent }}%
 - Swap usage: {{ health_check_report.swap_percent }}%
-- Updates available: {{ health_check_report.updates_available }}
-- APT check return code: {{ health_check_report.apt_check_rc }}
-- APT collection failed: {{ health_check_report.apt_collection_failed }}
-- Reboot required: {{ health_check_report.reboot_required }}
 - Time synchronized: {{ health_check_report.time_synchronized }}
 - Time synchronization required: {{ health_check_report.time_sync_required }}
 - Time synchronization check return code: {{ health_check_report.time_sync_check_rc }}
+
+## Security and maintenance
+
+- Patch policy: {{ health_check_report.patch_policy }}
+- Updates detected in cache: {{ health_check_report.updates_available }}
+- Security updates detected: {{ health_check_report.security_updates_available }}
+- Regular updates detected: {{ health_check_report.regular_updates_available }}
+- Review required: {{ health_check_report.review_required }}
+- Restart-sensitive: {{ health_check_report.restart_sensitive }}
+- Standard security: {{ health_check_report.standard_security }}
+- Package metadata: {{ health_check_report.package_metadata_status }}
+- Package metadata source: {{ health_check_report.package_metadata_source }}
+{% if health_check_report.package_metadata_age_hours is not none %}
+- Package metadata age: {{ health_check_report.package_metadata_age_hours }} hours
+{% else %}
+- Package metadata age: Unknown
+{% endif %}
+- Cached counts trusted: {{ health_check_report.patch_counts_trusted }}
+- APT check return code: {{ health_check_report.apt_check_rc }}
+- APT collection failed: {{ health_check_report.apt_collection_failed }}
+- Reboot required: {{ health_check_report.reboot_required }}
+
+{% if health_check_report.patch_status_reasons | length > 0 %}
+Patch posture reasons:
+
+{% for reason in health_check_report.patch_status_reasons %}
+- {{ reason }}
+{% endfor %}
+{% endif %}
+
+### Review-required security packages
+
+{% if health_check_report.security_packages.review_required | length > 0 %}
+{% for package in health_check_report.security_packages.review_required %}
+- `{{ package.name }}` → {{ package.candidate_version }} — {{ package.classification_reason }}
+{% endfor %}
+{% else %}
+None detected in the cached metadata.
+{% endif %}
+
+### Restart-sensitive security packages
+
+{% if health_check_report.security_packages.restart_sensitive | length > 0 %}
+{% for package in health_check_report.security_packages.restart_sensitive %}
+- `{{ package.name }}` → {{ package.candidate_version }} — {{ package.classification_reason }}
+{% endfor %}
+{% else %}
+None detected in the cached metadata.
+{% endif %}
+
+### Standard security packages
+
+{% if health_check_report.security_packages.standard_security | length > 0 %}
+{% for package in health_check_report.security_packages.standard_security %}
+- `{{ package.name }}` → {{ package.candidate_version }}
+{% endfor %}
+{% else %}
+None detected in the cached metadata.
+{% endif %}
 
 ## Failed services
 
