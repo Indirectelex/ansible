@@ -5,6 +5,13 @@ const state = {
   search: "",
   healthStatus: "ALL",
   patchStatus: "ALL",
+  healthCheckJob: {
+    state: "idle",
+    action: null,
+    host: null,
+    message: "",
+  },
+  healthCheckPollId: null,
 };
 
 const healthSeverityOrder = {
@@ -51,6 +58,7 @@ const meta = document.querySelector("#dashboard-meta");
 const dialog = document.querySelector("#host-dialog");
 const dialogTitle = document.querySelector("#dialog-title");
 const dialogContent = document.querySelector("#dialog-content");
+const healthCheckStatus = document.querySelector("#health-check-status");
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -106,6 +114,24 @@ function formatDate(value) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
+}
+
+function formatDuration(value) {
+  const seconds = Number(value);
+
+  if (!Number.isFinite(seconds)) {
+    return "Unknown duration";
+  }
+
+  if (seconds < 60) {
+    return `${Math.round(seconds)}s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  return remainingSeconds > 0
+    ? `${minutes}m ${remainingSeconds}s`
+    : `${minutes}m`;
 }
 
 function numberValue(value) {
@@ -166,33 +192,6 @@ function metadataAge(report) {
   return `${Math.round((age / 24) * 10) / 10}d`;
 }
 
-function securityCountDisplay(report) {
-  const count = numberValue(report.security_updates_available);
-
-  if (report.patch_counts_trusted === true) {
-    return String(count);
-  }
-
-  return count > 0 ? `${count} detected` : "Unknown";
-}
-
-function renderRows(rows) {
-  return `
-    <dl class="status-metrics">
-      ${rows
-        .map(
-          ([label, value, className = ""]) => `
-            <div class="status-metric ${escapeHtml(className)}">
-              <dt>${escapeHtml(label)}</dt>
-              <dd>${escapeHtml(value)}</dd>
-            </div>
-          `,
-        )
-        .join("")}
-    </dl>
-  `;
-}
-
 function reasonMarkup(
   reasons,
   emptyText = "No active status reasons.",
@@ -211,98 +210,6 @@ function reasonMarkup(
   `;
 }
 
-function renderHealthPanel(report) {
-  const status = healthStatusName(report.health_status || report.status);
-  const reasons = report.health_status_reasons || report.status_reasons || [];
-
-  return `
-    <section class="status-panel health-panel ${healthStatusClass(status)}">
-      <div class="status-panel-heading">
-        <span class="panel-label">Health</span>
-        <span class="status-badge ${healthStatusClass(status)}">
-          ${escapeHtml(status)}
-        </span>
-      </div>
-
-      ${renderRows([
-        ["CPU load / core", metricValue(report, "load_per_cpu")],
-        ["Memory", metricValue(report, "memory")],
-        ["Root disk", metricValue(report, "root_disk")],
-        ["Failed services", metricValue(report, "failed_services")],
-      ])}
-
-      ${
-        reasons.length > 0
-          ? reasonMarkup(reasons, "", "health-reasons")
-          : ""
-      }
-    </section>
-  `;
-}
-
-function renderPatchPanel(report) {
-  const status = patchStatusName(report.patch_posture_status);
-  const trusted = report.patch_counts_trusted === true;
-  const staleClass = trusted ? "" : "metric-untrusted";
-  const rows = [
-    ["Security updates", securityCountDisplay(report), staleClass],
-    [
-      "Regular updates",
-      String(numberValue(report.regular_updates_available)),
-      staleClass,
-    ],
-    ["Review required", String(numberValue(report.review_required))],
-    ["Restart-sensitive", String(numberValue(report.restart_sensitive))],
-    ["Reboot required", report.reboot_required ? "Yes" : "No"],
-    [
-      "Package metadata",
-      `${metadataAge(report)} · ${report.package_metadata_status || "UNKNOWN"}`,
-      staleClass,
-    ],
-  ];
-
-  if (report.os_update_automation_enabled === true) {
-    rows.push(
-      ["Pending since", formatDate(report.security_pending_since_at)],
-      ["Next automatic attempt", formatDate(report.os_update_next_attempt_at)],
-      [
-        "Last automatic attempt",
-        report.os_update_last_attempt_at
-          ? `${formatDate(report.os_update_last_attempt_at)} · ${report.os_update_last_result || "unknown"}`
-          : "No recorded attempt",
-      ],
-      [
-        "Automatic reboot",
-        report.os_update_automatic_reboot ? "Enabled" : "No",
-      ],
-    );
-  }
-
-  return `
-    <section class="status-panel patch-panel ${patchStatusClass(status)}">
-      <div class="status-panel-heading">
-        <span class="panel-label">Patch posture</span>
-        <span class="patch-badge ${patchStatusClass(status)}">
-          ${escapeHtml(patchStatusLabel(status))}
-        </span>
-      </div>
-
-      ${renderRows(rows)}
-
-      ${
-        trusted
-          ? ""
-          : `
-            <p class="data-warning">
-              Cached package data is stale or incomplete. Security totals
-              are detections, not a current complete count.
-            </p>
-          `
-      }
-    </section>
-  `;
-}
-
 function patchPolicyLabel(report) {
   if (report.patch_policy === "all_security_manual_approval") {
     return "Manual approval";
@@ -315,64 +222,335 @@ function patchPolicyLabel(report) {
   return "Monitor only";
 }
 
-function packageGroupMarkup(label, packages, className) {
-  if (!Array.isArray(packages) || packages.length === 0) {
-    return "";
+function firstReason(report, type) {
+  const reasons = type === "health"
+    ? report.health_status_reasons || report.status_reasons
+    : report.patch_status_reasons;
+
+  return Array.isArray(reasons) && reasons.length > 0
+    ? String(reasons[0])
+    : "Open the host details for the collected evidence.";
+}
+
+function hostActionGuidance(report) {
+  const healthStatus = healthStatusName(
+    report.health_status || report.status,
+  );
+  const patchStatus = patchStatusName(report.patch_posture_status);
+  const securityUpdates = numberValue(report.security_updates_available);
+  const reviewRequired = numberValue(report.review_required);
+
+  if (healthStatus === "CRITICAL") {
+    return {
+      requiresAction: true,
+      tone: "critical",
+      title: "Investigate this host now",
+      text: firstReason(report, "health"),
+    };
   }
 
+  if (healthStatus === "UNREACHABLE") {
+    return {
+      requiresAction: true,
+      tone: "critical",
+      title: "Restore monitoring connectivity",
+      text: firstReason(report, "health"),
+    };
+  }
+
+  if (healthStatus === "WARNING") {
+    return {
+      requiresAction: true,
+      tone: "warning",
+      title: "Review the health warning",
+      text: firstReason(report, "health"),
+    };
+  }
+
+  if (healthStatus === "UNKNOWN") {
+    return {
+      requiresAction: true,
+      tone: "warning",
+      title: "Review unavailable health data",
+      text: firstReason(report, "health"),
+    };
+  }
+
+  if (patchStatus === "ERROR") {
+    return {
+      requiresAction: true,
+      tone: "critical",
+      title: "Check patch-data collection",
+      text: "Rerun the health check, then inspect the APT collection evidence in details.",
+    };
+  }
+
+  if (patchStatus === "AUTOMATION_ERROR") {
+    return {
+      requiresAction: true,
+      tone: "critical",
+      title: "Inspect the automatic update failure",
+      text: firstReason(report, "patch"),
+    };
+  }
+
+  if (patchStatus === "AUTOMATION_OVERDUE") {
+    return {
+      requiresAction: true,
+      tone: "warning",
+      title: "Investigate OS update automation",
+      text: firstReason(report, "patch"),
+    };
+  }
+
+  if (
+    patchStatus === "DATA_STALE" ||
+    (
+      report.patch_counts_trusted !== true &&
+      !["ERROR", "UNKNOWN"].includes(patchStatus)
+    )
+  ) {
+    return {
+      requiresAction: true,
+      tone: "warning",
+      title: "Refresh package metadata",
+      text: `Cached package data is ${metadataAge(
+        report,
+      )} old or incomplete. Refresh metadata separately, then rerun the health check.`,
+    };
+  }
+
+  if (patchStatus === "REVIEW_REQUIRED") {
+    return {
+      requiresAction: true,
+      tone: "warning",
+      title: "Plan reviewed maintenance",
+      text: `${reviewRequired} infrastructure-sensitive ${plural(
+        reviewRequired,
+        "package requires",
+        "packages require",
+      )} approval before installation.`,
+    };
+  }
+
+  if (patchStatus === "ACTION_NEEDED") {
+    return {
+      requiresAction: true,
+      tone: "warning",
+      title: "Schedule security maintenance",
+      text: `${securityUpdates} ${plural(
+        securityUpdates,
+        "security update is",
+        "security updates are",
+      )} pending; monitoring will not install them.`,
+    };
+  }
+
+  if (patchStatus === "REBOOT_PENDING") {
+    return {
+      requiresAction: true,
+      tone: "warning",
+      title: "Schedule a controlled reboot",
+      text: "The host reports that a reboot is required; monitoring will not reboot it.",
+    };
+  }
+
+  if (patchStatus === "INSTALLING") {
+    return {
+      requiresAction: false,
+      tone: "neutral",
+      title: "No action while updates are running",
+      text: "The OS-managed update attempt is in progress. Check the next report for its result.",
+    };
+  }
+
+  if (patchStatus === "SCHEDULED") {
+    return {
+      requiresAction: false,
+      tone: "neutral",
+      title: "No action now",
+      text: report.os_update_next_attempt_at
+        ? `The OS-managed updater is scheduled to try ${formatDate(
+          report.os_update_next_attempt_at,
+        )}.`
+        : "The OS-managed updater is enabled and has a scheduled attempt.",
+    };
+  }
+
+  if (patchStatus === "ROUTINE_MAINTENANCE") {
+    return {
+      requiresAction: false,
+      tone: "neutral",
+      title: "No urgent action",
+      text: "Only routine package maintenance is pending.",
+    };
+  }
+
+  if (patchStatus === "CURRENT") {
+    return {
+      requiresAction: false,
+      tone: "ok",
+      title: "No action required",
+      text: "Health and patch posture are current.",
+    };
+  }
+
+  return {
+    requiresAction: true,
+    tone: "warning",
+    title: "Review unavailable status data",
+    text: "Open details to see which collection result is missing or unknown.",
+  };
+}
+
+function renderActionGuidance(report) {
+  const guidance = hostActionGuidance(report);
+
   return `
-    <section class="package-group ${escapeHtml(className)}">
-      <h4>${escapeHtml(label)} <span>${packages.length}</span></h4>
-      <ul>
-        ${packages
-          .map(
-            (packageItem) => `
-              <li>
-                <code>${escapeHtml(packageItem.name)}</code>
-                <span>${escapeHtml(
-                  packageItem.classification_reason || "Security update",
-                )}</span>
-              </li>
-            `,
-          )
-          .join("")}
-      </ul>
+    <section class="next-step next-step-${escapeHtml(guidance.tone)}">
+      <span class="next-step-label">Next step</span>
+      <strong>${escapeHtml(guidance.title)}</strong>
+      <p>${escapeHtml(guidance.text)}</p>
     </section>
   `;
 }
 
-function renderSecurityDisclosure(report) {
-  const groups = report.security_packages || {};
-  const total = numberValue(report.security_updates_available);
+function latestMaintenanceRun(report) {
+  return report.maintenance_history?.latest || null;
+}
 
-  if (total === 0) {
+function maintenanceResult(run) {
+  if (run?.state === "success") {
+    return {label: "Successful", className: "maintenance-success"};
+  }
+
+  const installation = (run?.phases || []).find(
+    (phase) => phase.name === "installation",
+  );
+
+  if (installation?.state === "success") {
+    return {
+      label: "Installed; report refresh failed",
+      className: "maintenance-warning",
+    };
+  }
+
+  return {label: "Failed", className: "maintenance-failed"};
+}
+
+function renderLastMaintenance(report) {
+  const run = latestMaintenanceRun(report);
+
+  if (!run) {
     return "";
   }
 
+  const result = maintenanceResult(run);
+  const packageCount = numberValue(run.approved_package_count);
+
   return `
-    <details class="security-disclosure">
-      <summary>
-        View ${total} detected ${plural(total, "security package")}
-      </summary>
-      <div class="package-groups">
-        ${packageGroupMarkup(
-          "Review required",
-          groups.review_required,
-          "package-review",
-        )}
-        ${packageGroupMarkup(
-          "Restart-sensitive",
-          groups.restart_sensitive,
-          "package-restart",
-        )}
-        ${packageGroupMarkup(
-          "Standard security",
-          groups.standard_security,
-          "package-standard",
-        )}
-      </div>
-    </details>
+    <div class="last-maintenance">
+      <span class="last-maintenance-label">Last security update</span>
+      <strong class="${escapeHtml(result.className)}">
+        ${escapeHtml(result.label)}
+      </strong>
+      <span class="muted">
+        ${escapeHtml(formatDate(run.finished_at))} ·
+        ${packageCount} approved ${escapeHtml(plural(packageCount, "package"))}
+      </span>
+    </div>
   `;
+}
+
+function healthCheckIsRunning() {
+  return state.healthCheckJob.state === "running";
+}
+
+function renderHealthCheckButton(report) {
+  const isThisJob =
+    state.healthCheckJob.action === "health_check" &&
+    state.healthCheckJob.host === report.host;
+  const isRunning = healthCheckIsRunning();
+  const label = isRunning && isThisJob
+    ? "Checking"
+    : "Run health check";
+
+  return `
+    <button
+      class="secondary-button run-check-button"
+      type="button"
+      data-action="health-check"
+      data-host="${escapeHtml(report.host)}"
+      ${isRunning ? "disabled" : ""}
+      ${isRunning && isThisJob ? 'aria-busy="true"' : ""}
+    >
+      ${escapeHtml(label)}
+    </button>
+  `;
+}
+
+function securityPackageNames(report) {
+  const groups = report.security_packages || {};
+
+  return [
+    ...(groups.review_required || []),
+    ...(groups.restart_sensitive || []),
+    ...(groups.standard_security || []),
+  ]
+    .map((item) => String(item.name || ""))
+    .filter((name) => name.length > 0)
+    .sort();
+}
+
+function renderSecurityUpdateButton(report) {
+  const securityUpdates = numberValue(report.security_updates_available);
+
+  if (securityUpdates < 1) {
+    return "";
+  }
+
+  const isThisJob =
+    state.healthCheckJob.action === "security_update" &&
+    state.healthCheckJob.host === report.host;
+  const isRunning = healthCheckIsRunning();
+  const label = isRunning && isThisJob
+    ? "Installing"
+    : `Install security (${securityUpdates})`;
+
+  return `
+    <button
+      class="security-update-button"
+      type="button"
+      data-action="security-update"
+      data-host="${escapeHtml(report.host)}"
+      ${isRunning ? "disabled" : ""}
+      ${isRunning && isThisJob ? 'aria-busy="true"' : ""}
+      title="Refresh APT metadata and install packages detected in security pockets"
+    >
+      ${escapeHtml(label)}
+    </button>
+  `;
+}
+
+function renderHealthCheckStatus() {
+  const job = state.healthCheckJob;
+
+  if (!job || job.state === "idle") {
+    healthCheckStatus.hidden = true;
+    healthCheckStatus.textContent = "";
+    healthCheckStatus.className = "run-status";
+    return;
+  }
+
+  const messages = {
+    running: job.message || `Dashboard action running for ${job.host}.`,
+    success: job.message || `Dashboard action completed for ${job.host}.`,
+    failed: job.message || `Dashboard action failed for ${job.host}.`,
+  };
+
+  healthCheckStatus.hidden = false;
+  healthCheckStatus.className = `run-status run-status-${job.state}`;
+  healthCheckStatus.textContent = messages[job.state] || job.message;
 }
 
 function renderHostCard(report) {
@@ -393,34 +571,57 @@ function renderHostCard(report) {
             ${escapeHtml(formatDate(report.generated_at))}
           </p>
         </div>
-        <span class="host-policy">
-          ${escapeHtml(patchPolicyLabel(report))}
-        </span>
       </div>
 
-      <div class="host-status-grid">
-        ${renderHealthPanel(report)}
-        ${renderPatchPanel(report)}
+      <div class="compact-status-row">
+        <div>
+          <span class="panel-label">Health</span>
+          <span class="status-badge ${healthStatusClass(healthStatus)}">
+            ${escapeHtml(healthStatus)}
+          </span>
+        </div>
+        <div>
+          <span class="panel-label">Maintenance</span>
+          <span class="patch-badge ${patchStatusClass(patchStatus)}">
+            ${escapeHtml(patchStatusLabel(patchStatus))}
+          </span>
+        </div>
       </div>
 
-      ${renderSecurityDisclosure(report)}
+      <dl class="key-metrics">
+        <div>
+          <dt>CPU / core</dt>
+          <dd>${escapeHtml(metricValue(report, "load_per_cpu"))}</dd>
+        </div>
+        <div>
+          <dt>Memory</dt>
+          <dd>${escapeHtml(metricValue(report, "memory"))}</dd>
+        </div>
+        <div>
+          <dt>Root disk</dt>
+          <dd>${escapeHtml(metricValue(report, "root_disk"))}</dd>
+        </div>
+        <div>
+          <dt>Failed services</dt>
+          <dd>${escapeHtml(metricValue(report, "failed_services"))}</dd>
+        </div>
+      </dl>
+
+      ${renderActionGuidance(report)}
+
+      ${renderLastMaintenance(report)}
 
       <div class="card-actions">
-        <a
-          class="report-link"
-          href="${encodeURIComponent(report.host)}.md"
-          target="_blank"
-          rel="noopener"
-        >
-          Markdown report
-        </a>
+        ${renderHealthCheckButton(report)}
+
+        ${renderSecurityUpdateButton(report)}
 
         <button
           type="button"
           data-action="details"
           data-host="${escapeHtml(report.host)}"
         >
-          View all details
+          View details
         </button>
       </div>
     </article>
@@ -428,25 +629,12 @@ function renderHostCard(report) {
 }
 
 function renderFleetSummary(reports) {
-  const securityUpdates = reports.reduce(
-    (total, report) =>
-      total + numberValue(report.security_updates_available),
-    0,
-  );
-  const manualSecurityHosts = reports.filter(
+  const healthyHosts = reports.filter(
     (report) =>
-      numberValue(report.security_updates_available) > 0 &&
-      report.os_update_automation_enabled !== true,
+      healthStatusName(report.health_status || report.status) === "OK",
   ).length;
-  const osManagedSecurityHosts = reports.filter(
-    (report) =>
-      numberValue(report.security_updates_available) > 0 &&
-      report.os_update_automation_enabled === true,
-  ).length;
-  const automationAttention = reports.filter((report) =>
-    ["AUTOMATION_OVERDUE", "AUTOMATION_ERROR"].includes(
-      patchStatusName(report.patch_posture_status),
-    ),
+  const attentionHosts = reports.filter(
+    (report) => hostActionGuidance(report).requiresAction,
   ).length;
   const reboots = reports.filter((report) => report.reboot_required).length;
   const freshHosts = reports.filter(
@@ -457,21 +645,31 @@ function renderFleetSummary(reports) {
   const staleHosts = reports.length - freshHosts;
 
   const cards = [
-    ["Security updates detected", securityUpdates, "summary-action"],
-    ["Hosts needing manual patching", manualSecurityHosts, "summary-review"],
-    ["OS-managed pending hosts", osManagedSecurityHosts, "summary-scheduled"],
-    ["Automation needing attention", automationAttention, "summary-error"],
+    [
+      "Healthy hosts",
+      `${healthyHosts} / ${reports.length}`,
+      "summary-fresh",
+    ],
+    [
+      "Need your attention",
+      attentionHosts,
+      attentionHosts > 0 ? "summary-review" : "summary-fresh",
+    ],
     ["Reboots required", reboots, "summary-reboot"],
-    ["Fresh package metadata", `${freshHosts} / ${reports.length}`, "summary-fresh"],
+    [
+      "Package data current",
+      `${freshHosts} / ${reports.length}`,
+      staleHosts > 0 ? "summary-action" : "summary-fresh",
+    ],
   ];
 
   fleetSummary.innerHTML = `
     <div class="summary-heading">
       <div>
-        <p class="eyebrow">Fleet maintenance</p>
-        <h2>Security &amp; maintenance</h2>
+        <p class="eyebrow">Fleet status</p>
+        <h2>At a glance</h2>
       </div>
-      <p class="muted">Cached APT observations from the latest report run</p>
+      <p class="muted">Open a host only when you need evidence or detail</p>
     </div>
 
     <div class="summary-grid">
@@ -488,15 +686,14 @@ function renderFleetSummary(reports) {
     </div>
 
     ${
-      staleHosts > 0
+      attentionHosts > 0
         ? `
           <p class="fleet-warning">
-            ${staleHosts} ${plural(staleHosts, "host has", "hosts have")}
-            stale or incomplete package metadata. Fleet security totals are
-            detected cached updates, not a guaranteed current total.
+            ${attentionHosts} ${plural(attentionHosts, "host needs", "hosts need")}
+            your attention. Each affected host card gives the next step.
           </p>
         `
-        : '<p class="fleet-ok">Package metadata is fresh on every host.</p>'
+        : '<p class="fleet-ok">No immediate operator action is required.</p>'
     }
   `;
 }
@@ -718,6 +915,150 @@ function renderSectionGroups(report) {
     .join("");
 }
 
+function phaseLabel(value) {
+  const labels = {
+    installation: "Package installation",
+    report_refresh: "Health and report refresh",
+  };
+
+  return labels[value] || humanizeKey(value || "phase");
+}
+
+function phaseStateLabel(value) {
+  const labels = {
+    success: "Successful",
+    failed: "Failed",
+    timed_out: "Timed out",
+    could_not_start: "Could not start",
+  };
+
+  return labels[value] || humanizeKey(value || "unknown");
+}
+
+function renderMaintenancePhase(phase) {
+  const output = Array.isArray(phase.output_tail)
+    ? phase.output_tail.join("\n")
+    : "No output was captured.";
+
+  return `
+    <section class="maintenance-phase">
+      <div class="maintenance-phase-heading">
+        <strong>${escapeHtml(phaseLabel(phase.name))}</strong>
+        <span class="maintenance-phase-${escapeHtml(phase.state || "unknown")}">
+          ${escapeHtml(phaseStateLabel(phase.state))}
+        </span>
+      </div>
+      <p class="muted">
+        ${escapeHtml(formatDuration(phase.duration_seconds))} ·
+        return code ${escapeHtml(phase.return_code ?? "none")}
+      </p>
+      <details class="maintenance-log">
+        <summary>View captured output</summary>
+        <pre>${escapeHtml(output)}</pre>
+      </details>
+    </section>
+  `;
+}
+
+function renderMaintenanceRun(run, index) {
+  const result = maintenanceResult(run);
+  const packages = Array.isArray(run.approved_packages)
+    ? run.approved_packages
+    : [];
+  const finalReport = run.final_report || null;
+
+  return `
+    <details class="maintenance-run" ${index === 0 ? "open" : ""}>
+      <summary>
+        <span>${escapeHtml(formatDate(run.finished_at))}</span>
+        <strong class="${escapeHtml(result.className)}">
+          ${escapeHtml(result.label)}
+        </strong>
+      </summary>
+      <div class="maintenance-run-body">
+        <dl class="maintenance-facts">
+          <div>
+            <dt>Started</dt>
+            <dd>${escapeHtml(formatDate(run.started_at))}</dd>
+          </div>
+          <div>
+            <dt>Duration</dt>
+            <dd>${escapeHtml(formatDuration(run.duration_seconds))}</dd>
+          </div>
+          <div>
+            <dt>Approved package set</dt>
+            <dd>${escapeHtml(run.approved_package_count ?? packages.length)}</dd>
+          </div>
+          <div>
+            <dt>Automatic reboot</dt>
+            <dd>${run.automatic_reboot === true ? "Yes" : "No"}</dd>
+          </div>
+          <div>
+            <dt>Final health</dt>
+            <dd>${escapeHtml(finalReport?.health_status ?? "Not refreshed")}</dd>
+          </div>
+          <div>
+            <dt>Security updates remaining</dt>
+            <dd>${escapeHtml(
+              finalReport?.security_updates_available ?? "Not refreshed",
+            )}</dd>
+          </div>
+          <div>
+            <dt>Reboot required afterward</dt>
+            <dd>${
+              finalReport === null
+                ? "Not refreshed"
+                : finalReport.reboot_required === true
+                ? "Yes"
+                : "No"
+            }</dd>
+          </div>
+        </dl>
+
+        <p class="maintenance-message">${escapeHtml(run.message || "")}</p>
+
+        <details class="approved-packages">
+          <summary>
+            View approved package set (${escapeHtml(packages.length)})
+          </summary>
+          ${
+            packages.length > 0
+              ? `<ul>${packages
+                  .map((name) => `<li><code>${escapeHtml(name)}</code></li>`)
+                  .join("")}</ul>`
+              : '<p class="muted">No cached package names were available.</p>'
+          }
+        </details>
+
+        <div class="maintenance-phases">
+          ${(run.phases || []).map(renderMaintenancePhase).join("")}
+        </div>
+      </div>
+    </details>
+  `;
+}
+
+function renderMaintenanceHistory(report) {
+  const history = report.maintenance_history;
+  const runs = Array.isArray(history?.runs) ? history.runs : [];
+
+  return `
+    <section class="category-block maintenance-history">
+      <h3 class="category-title">Security maintenance history</h3>
+      ${
+        runs.length > 0
+          ? runs.map(renderMaintenanceRun).join("")
+          : `
+            <p class="muted">
+              No dashboard-triggered security update has been recorded yet.
+              History begins with the next update run after this feature is installed.
+            </p>
+          `
+      }
+    </section>
+  `;
+}
+
 function openHostDetails(host) {
   const report = state.reports.find((item) => item.host === host);
 
@@ -732,6 +1073,8 @@ function openHostDetails(host) {
 
   dialogTitle.textContent = report.host;
   dialogContent.innerHTML = `
+    ${renderActionGuidance(report)}
+
     <div class="detail-summary">
       <div class="dialog-status-grid">
         <section>
@@ -759,6 +1102,9 @@ function openHostDetails(host) {
       </div>
 
       <div class="detail-actions">
+        <p class="detail-policy">
+          ${escapeHtml(patchPolicyLabel(report))}
+        </p>
         <p class="muted">
           Generated ${escapeHtml(formatDate(report.generated_at))}
         </p>
@@ -773,6 +1119,7 @@ function openHostDetails(host) {
       </div>
     </div>
 
+    ${renderMaintenanceHistory(report)}
     ${renderMetricGroups(report)}
     ${renderSectionGroups(report)}
   `;
@@ -784,16 +1131,44 @@ function openHostDetails(host) {
   }
 }
 
+async function loadMaintenanceHistory(host) {
+  try {
+    const response = await fetch(
+      `maintenance/${encodeURIComponent(host)}.json`,
+      {cache: "no-store"},
+    );
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    return null;
+  }
+}
+
 async function loadReport(entry) {
   try {
-    const response = await fetch(entry.report, {cache: "no-store"});
+    const [response, maintenanceHistory] = await Promise.all([
+      fetch(entry.report, {cache: "no-store"}),
+      loadMaintenanceHistory(entry.id),
+    ]);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
 
     const report = await response.json();
-    return {...report, host: report.host || entry.id};
+    return {
+      ...report,
+      host: report.host || entry.id,
+      maintenance_history: maintenanceHistory,
+    };
   } catch (error) {
     return {
       schema_version: 3,
@@ -878,6 +1253,213 @@ async function loadDashboard() {
   }
 }
 
+async function responsePayload(response) {
+  try {
+    return await response.json();
+  } catch (error) {
+    return {};
+  }
+}
+
+function stopHealthCheckPolling() {
+  if (state.healthCheckPollId !== null) {
+    window.clearTimeout(state.healthCheckPollId);
+    state.healthCheckPollId = null;
+  }
+}
+
+function scheduleHealthCheckPoll() {
+  stopHealthCheckPolling();
+  state.healthCheckPollId = window.setTimeout(
+    () => refreshHealthCheckStatus(false),
+    1200,
+  );
+}
+
+async function refreshHealthCheckStatus(silent = true) {
+  try {
+    const response = await fetch("api/health-check/status", {
+      cache: "no-store",
+    });
+    const payload = await responsePayload(response);
+
+    if (!response.ok || !payload.job) {
+      throw new Error(`Controller returned HTTP ${response.status}.`);
+    }
+
+    const wasRunning = healthCheckIsRunning();
+    state.healthCheckJob = payload.job;
+    renderHealthCheckStatus();
+    renderCards();
+
+    if (state.healthCheckJob.state === "running") {
+      scheduleHealthCheckPoll();
+    } else {
+      stopHealthCheckPolling();
+
+      if (wasRunning) {
+        await loadDashboard();
+      }
+    }
+  } catch (error) {
+    stopHealthCheckPolling();
+
+    if (!silent) {
+      state.healthCheckJob = {
+        state: "failed",
+        host: state.healthCheckJob.host,
+        message:
+          "The health-check controller is unavailable. " +
+          "Start dashboard/server.py instead of python -m http.server.",
+      };
+      renderHealthCheckStatus();
+      renderCards();
+    }
+  }
+}
+
+async function startHealthCheck(host) {
+  if (healthCheckIsRunning()) {
+    return;
+  }
+
+  state.healthCheckJob = {
+    state: "running",
+    host,
+    message: `Starting health check for ${host}…`,
+  };
+  renderHealthCheckStatus();
+  renderCards();
+
+  try {
+    const response = await fetch(
+      `api/health-check/${encodeURIComponent(host)}`,
+      {
+        method: "POST",
+        headers: {"X-Health-Dashboard": "1"},
+      },
+    );
+    const payload = await responsePayload(response);
+
+    if (!response.ok || !payload.job) {
+      throw new Error(
+        payload.error || `Controller returned HTTP ${response.status}.`,
+      );
+    }
+
+    state.healthCheckJob = payload.job;
+    renderHealthCheckStatus();
+    renderCards();
+    scheduleHealthCheckPoll();
+  } catch (error) {
+    state.healthCheckJob = {
+      state: "failed",
+      host,
+      message:
+        `${error.message} ` +
+        "Launch dashboard/server.py to enable this button.",
+    };
+    renderHealthCheckStatus();
+    renderCards();
+  }
+}
+
+function confirmSecurityUpdate(report) {
+  const names = securityPackageNames(report);
+  const count = numberValue(report.security_updates_available);
+  const reviewCount = numberValue(report.review_required);
+  const visibleNames = names.slice(0, 12);
+  const remaining = Math.max(0, names.length - visibleNames.length);
+  const packageSummary = visibleNames.length > 0
+    ? `\n\nCurrently detected:\n- ${visibleNames.join("\n- ")}`
+    : "";
+  const remainingSummary = remaining > 0
+    ? `\n- …and ${remaining} more`
+    : "";
+  const reviewWarning = reviewCount > 0
+    ? `\n\n${reviewCount} package(s) are infrastructure-sensitive.`
+    : "";
+
+  return window.confirm(
+    `Install all detected security updates on ${report.host}?` +
+    `\n\nCached count: ${count}. APT metadata will be refreshed, so the ` +
+    "exact package set may change." +
+    reviewWarning +
+    packageSummary +
+    remainingSummary +
+    "\n\nNo reboot will be performed. Package services may restart as part " +
+    "of normal package installation. Continue?",
+  );
+}
+
+async function startSecurityUpdate(host) {
+  if (healthCheckIsRunning()) {
+    return;
+  }
+
+  const report = state.reports.find((item) => item.host === host);
+
+  if (!report || !confirmSecurityUpdate(report)) {
+    return;
+  }
+
+  state.healthCheckJob = {
+    state: "running",
+    action: "security_update",
+    phase: "starting",
+    host,
+    message: `Starting security update for ${host}…`,
+  };
+  renderHealthCheckStatus();
+  renderCards();
+
+  try {
+    const response = await fetch(
+      `api/security-update/${encodeURIComponent(host)}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Health-Dashboard": "1",
+        },
+        body: JSON.stringify({
+          confirm_host: host,
+          install_security_updates: true,
+          automatic_reboot: false,
+        }),
+      },
+    );
+    const payload = await responsePayload(response);
+
+    if (!response.ok || !payload.job) {
+      throw new Error(
+        payload.error || `Controller returned HTTP ${response.status}.`,
+      );
+    }
+
+    state.healthCheckJob = payload.job;
+    renderHealthCheckStatus();
+    renderCards();
+    scheduleHealthCheckPoll();
+  } catch (error) {
+    state.healthCheckJob = {
+      state: "failed",
+      action: "security_update",
+      host,
+      message:
+        `${error.message} ` +
+        "Launch dashboard/server.py to enable this button.",
+    };
+    renderHealthCheckStatus();
+    renderCards();
+  }
+}
+
+async function initializeDashboard() {
+  await loadDashboard();
+  await refreshHealthCheckStatus(true);
+}
+
 document
   .querySelector("#host-search")
   .addEventListener("input", (event) => {
@@ -914,13 +1496,31 @@ dialog.addEventListener("click", (event) => {
 });
 
 grid.addEventListener("click", (event) => {
-  const button = event.target.closest(
+  const securityUpdateButton = event.target.closest(
+    'button[data-action="security-update"]',
+  );
+
+  if (securityUpdateButton) {
+    startSecurityUpdate(securityUpdateButton.dataset.host);
+    return;
+  }
+
+  const healthCheckButton = event.target.closest(
+    'button[data-action="health-check"]',
+  );
+
+  if (healthCheckButton) {
+    startHealthCheck(healthCheckButton.dataset.host);
+    return;
+  }
+
+  const detailsButton = event.target.closest(
     'button[data-action="details"]',
   );
 
-  if (button) {
-    openHostDetails(button.dataset.host);
+  if (detailsButton) {
+    openHostDetails(detailsButton.dataset.host);
   }
 });
 
-loadDashboard();
+initializeDashboard();

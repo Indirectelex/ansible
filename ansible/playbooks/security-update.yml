@@ -1,0 +1,190 @@
+---
+- name: Install explicitly detected APT security updates
+  hosts: monitoring_enabled
+  become: true
+  gather_facts: false
+  serial: 1
+
+  vars:
+    security_update_origin_pattern: >-
+      (?i)\b(?:Debian-Security|Ubuntu):[^ )]+/[^ )]*-security\b
+    security_update_package_pattern: '^[A-Za-z0-9][A-Za-z0-9.+:-]*$'
+
+  pre_tasks:
+    - name: Require one explicitly confirmed dashboard target
+      ansible.builtin.assert:
+        that:
+          - security_update_dashboard_confirmed | default(false) | bool
+          - security_update_target_host | default('') == inventory_hostname
+          - ansible_play_hosts_all | length == 1
+        fail_msg: >-
+          Security installation requires one explicit target and dashboard
+          confirmation. This playbook must not be run fleet-wide.
+      changed_when: false
+
+  tasks:
+    - name: Refresh APT metadata without installing packages
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 0
+        lock_timeout: 60
+      environment:
+        LC_ALL: C
+      register: security_update_metadata_refresh
+
+    - name: Recalculate available upgrades from fresh metadata
+      ansible.builtin.command:
+        argv:
+          - apt-get
+          - --simulate
+          - upgrade
+      environment:
+        LC_ALL: C
+      register: security_update_upgrade_simulation
+      changed_when: false
+
+    - name: Select packages from configured security pockets
+      ansible.builtin.set_fact:
+        security_update_lines: >-
+          {{
+            security_update_upgrade_simulation.stdout_lines
+            | default([])
+            | select('match', '^Inst ')
+            | select('search', security_update_origin_pattern)
+            | list
+          }}
+      changed_when: false
+
+    - name: Initialize the exact security package list
+      ansible.builtin.set_fact:
+        security_update_packages: []
+      changed_when: false
+
+    - name: Extract each exact security package name
+      ansible.builtin.set_fact:
+        security_update_packages: >-
+          {{ security_update_packages + [item.split()[1]] }}
+      loop: "{{ security_update_lines }}"
+      loop_control:
+        label: "{{ item.split()[1] if item.split() | length > 1 else item }}"
+      when: item.split() | length > 1
+      changed_when: false
+
+    - name: Normalize the exact security package list
+      ansible.builtin.set_fact:
+        security_update_packages: >-
+          {{ security_update_packages | unique | sort | list }}
+      changed_when: false
+
+    - name: Validate the selected package count
+      ansible.builtin.assert:
+        that:
+          - security_update_packages | length == security_update_lines | length
+        fail_msg: >-
+          APT security candidates could not be converted into a safe package
+          allowlist. Nothing was installed.
+      changed_when: false
+
+    - name: Validate each selected package name
+      ansible.builtin.assert:
+        that:
+          - item is match(security_update_package_pattern)
+        fail_msg: >-
+          Package name {{ item }} is not safe. Nothing was installed.
+      loop: "{{ security_update_packages }}"
+      loop_control:
+        label: "{{ item }}"
+      changed_when: false
+
+    - name: Display the approved security package set
+      ansible.builtin.debug:
+        msg:
+          host: "{{ inventory_hostname }}"
+          security_package_count: "{{ security_update_packages | length }}"
+          security_packages: "{{ security_update_packages }}"
+          reboot_policy: No automatic reboot
+
+    - name: Simulate the exact security package installation
+      ansible.builtin.command:
+        argv: >-
+          {{
+            [
+              'apt-get',
+              '-o',
+              'DPkg::Lock::Timeout=60',
+              '--simulate',
+              '--no-remove',
+              'install',
+              '--only-upgrade'
+            ]
+            + security_update_packages
+          }}
+      environment:
+        LC_ALL: C
+      register: security_update_exact_simulation
+      changed_when: false
+      when: security_update_packages | length > 0
+
+    - name: Reject any installation plan that removes packages
+      ansible.builtin.assert:
+        that:
+          - >-
+            'The following packages will be REMOVED'
+            not in security_update_exact_simulation.stdout
+          - >-
+            security_update_exact_simulation.stdout_lines
+            | select('match', '^Remv ')
+            | list
+            | length == 0
+        fail_msg: >-
+          The security installation simulation proposed package removal.
+          Nothing was installed.
+      changed_when: false
+      when: security_update_packages | length > 0
+
+    - name: Install exact security set  # noqa package-latest
+      ansible.builtin.apt:
+        name: "{{ security_update_packages }}"
+        state: latest
+        only_upgrade: true
+        fail_on_autoremove: true
+        force_apt_get: true
+        dpkg_options: force-confold
+        lock_timeout: 60
+      environment:
+        APT_LISTCHANGES_FRONTEND: none
+        DEBIAN_FRONTEND: noninteractive
+        LC_ALL: C
+        NEEDRESTART_MODE: l
+      register: security_update_installation
+      when: security_update_packages | length > 0
+
+    - name: Check package database consistency
+      ansible.builtin.command:
+        argv:
+          - dpkg
+          - --audit
+      register: security_update_dpkg_audit
+      changed_when: false
+
+    - name: Fail when the package database reports incomplete packages
+      ansible.builtin.assert:
+        that:
+          - security_update_dpkg_audit.stdout | trim | length == 0
+        fail_msg: >-
+          Security packages were processed, but dpkg reports an incomplete
+          package state. Manual review is required.
+      changed_when: false
+
+    - name: Check whether the host now requests a reboot
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: security_update_reboot_required
+
+    - name: Display the installation result
+      ansible.builtin.debug:
+        msg:
+          host: "{{ inventory_hostname }}"
+          installed_security_packages: "{{ security_update_packages | length }}"
+          reboot_required: "{{ security_update_reboot_required.stat.exists }}"
+          reboot_performed: false

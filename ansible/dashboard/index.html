@@ -7,7 +7,7 @@
     content="width=device-width, initial-scale=1"
   >
   <title>Infrastructure Health &amp; Patch Posture</title>
-  <link rel="stylesheet" href="assets/dashboard.css?v=3">
+  <link rel="stylesheet" href="assets/dashboard.css?v=11">
 </head>
 <body>
   <header class="page-header">
@@ -22,6 +22,14 @@
     </button>
   </header>
 
+  <div
+    id="health-check-status"
+    class="run-status"
+    role="status"
+    aria-live="polite"
+    hidden
+  ></div>
+
   <section
     id="fleet-summary"
     class="fleet-summary"
@@ -31,47 +39,50 @@
     <div class="empty-state">Loading fleet summary…</div>
   </section>
 
-  <section class="toolbar" aria-label="Report filters">
-    <label>
-      <span>Find a host</span>
-      <input
-        id="host-search"
-        type="search"
-        placeholder="Search by hostname"
-      >
-    </label>
+  <details class="filter-panel">
+    <summary>Filter hosts</summary>
+    <section class="toolbar" aria-label="Report filters">
+      <label>
+        <span>Find a host</span>
+        <input
+          id="host-search"
+          type="search"
+          placeholder="Search by hostname"
+        >
+      </label>
 
-    <label>
-      <span>Health</span>
-      <select id="health-filter">
-        <option value="ALL">All health states</option>
-        <option value="CRITICAL">Critical</option>
-        <option value="WARNING">Warning</option>
-        <option value="UNREACHABLE">Unreachable</option>
-        <option value="OK">OK</option>
-        <option value="UNKNOWN">Unknown</option>
-      </select>
-    </label>
+      <label>
+        <span>Health</span>
+        <select id="health-filter">
+          <option value="ALL">All health states</option>
+          <option value="CRITICAL">Critical</option>
+          <option value="WARNING">Warning</option>
+          <option value="UNREACHABLE">Unreachable</option>
+          <option value="OK">OK</option>
+          <option value="UNKNOWN">Unknown</option>
+        </select>
+      </label>
 
-    <label>
-      <span>Patch posture</span>
-      <select id="patch-filter">
-        <option value="ALL">All patch states</option>
-        <option value="ERROR">Data error</option>
-        <option value="AUTOMATION_ERROR">Automation error</option>
-        <option value="AUTOMATION_OVERDUE">Automation overdue</option>
-        <option value="REVIEW_REQUIRED">Review required</option>
-        <option value="ACTION_NEEDED">Action needed</option>
-        <option value="DATA_STALE">Data stale</option>
-        <option value="REBOOT_PENDING">Reboot pending</option>
-        <option value="INSTALLING">Installing</option>
-        <option value="SCHEDULED">Scheduled</option>
-        <option value="ROUTINE_MAINTENANCE">Routine maintenance</option>
-        <option value="CURRENT">Current</option>
-        <option value="UNKNOWN">Unknown</option>
-      </select>
-    </label>
-  </section>
+      <label>
+        <span>Patch posture</span>
+        <select id="patch-filter">
+          <option value="ALL">All patch states</option>
+          <option value="ERROR">Data error</option>
+          <option value="AUTOMATION_ERROR">Automation error</option>
+          <option value="AUTOMATION_OVERDUE">Automation overdue</option>
+          <option value="REVIEW_REQUIRED">Review required</option>
+          <option value="ACTION_NEEDED">Action needed</option>
+          <option value="DATA_STALE">Data stale</option>
+          <option value="REBOOT_PENDING">Reboot pending</option>
+          <option value="INSTALLING">Installing</option>
+          <option value="SCHEDULED">Scheduled</option>
+          <option value="ROUTINE_MAINTENANCE">Routine maintenance</option>
+          <option value="CURRENT">Current</option>
+          <option value="UNKNOWN">Unknown</option>
+        </select>
+      </label>
+    </section>
+  </details>
 
   <main>
     <div id="host-grid" class="host-grid" aria-live="polite"></div>
@@ -96,6 +107,6 @@
     <div id="dialog-content"></div>
   </dialog>
 
-  <script src="assets/dashboard.js?v=3"></script>
+  <script src="assets/dashboard.js?v=11"></script>
 </body>
 </html>
