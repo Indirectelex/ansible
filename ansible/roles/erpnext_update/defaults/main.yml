@@ -31,3 +31,6 @@ erpnext_min_free_kb: 2097152
 
 # Test the automatic-update path without modifying production
 erpnext_update_preflight_only: false
+
+# Number of verified pre-update backups to retain locally
+erpnext_backup_retention: 2

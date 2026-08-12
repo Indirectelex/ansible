@@ -175,9 +175,7 @@
     argv:
       - docker
       - cp
-      - >-
-        {{ erpnext_backend_container }}:
-        {{- erpnext_container_backup_dir }}/{{ item }}
+      - "{{ erpnext_backend_container }}:{{ erpnext_container_backup_dir }}/{{ item }}"
       - "{{ erpnext_backup_directory }}/"
   loop: "{{ erpnext_new_backup_files }}"
   changed_when: true
@@ -265,3 +263,60 @@
       - >-
         Database:
         {{ erpnext_database_backup_stat.stat.size }} bytes
+
+# ============================================================
+# LOCAL BACKUP RETENTION
+#
+# Only backups that completed all verification steps receive
+# the .verified marker.
+# Keep the newest N verified backups.
+# ============================================================
+
+- name: Mark current ERPNext backup as verified
+  ansible.builtin.file:
+    path: "{{ erpnext_backup_directory }}/.verified"
+    state: touch
+    mode: "0600"
+
+- name: Find verified local ERPNext backups
+  ansible.builtin.find:
+    paths: "{{ erpnext_backup_root }}"
+    patterns:
+      - ".verified"
+    file_type: file
+    recurse: true
+  register: erpnext_verified_backup_markers
+
+- name: Determine verified ERPNext backup directories
+  ansible.builtin.set_fact:
+    erpnext_verified_backup_directories: >-
+      {{
+        erpnext_verified_backup_markers.files
+        | map(attribute='path')
+        | map('regex_replace', '/\.verified$', '')
+        | sort(reverse=true)
+        | list
+      }}
+
+- name: Determine old verified ERPNext backups to remove
+  ansible.builtin.set_fact:
+    erpnext_backups_to_remove: >-
+      {{
+        erpnext_verified_backup_directories[
+          erpnext_backup_retention | int:
+        ]
+      }}
+
+- name: Remove old verified ERPNext backups
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ erpnext_backups_to_remove }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Report ERPNext backup retention
+  ansible.builtin.debug:
+    msg:
+      - "Verified backups retained: {{ erpnext_backup_retention }}"
+      - "Old verified backups removed: {{ erpnext_backups_to_remove | length }}"
