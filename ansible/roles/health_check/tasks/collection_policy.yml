@@ -2,9 +2,9 @@
 - name: Determine platform applicability
   ansible.builtin.set_fact:
     health_check_docker_applicable: >-
-      {{ inventory_hostname in groups.get('docker_hosts', []) }}
+      {{ health_check_effective_modules.docker | bool }}
     health_check_proxmox_applicable: >-
-      {{ inventory_hostname in groups.get('proxmox_hosts', []) }}
+      {{ health_check_effective_modules.proxmox | bool }}
 
 - name: Evaluate collection results
   ansible.builtin.set_fact:

@@ -1,0 +1,85 @@
+---
+- name: Validate host feature configuration
+  ansible.builtin.assert:
+    that:
+      - (host_features | default({})) is mapping
+      - (monitoring_modules | default({})) is mapping
+      - (health_check_detected_features | default({})) is mapping
+    fail_msg: >-
+      host_features, monitoring_modules, and detected features must be
+      dictionaries.
+  changed_when: false
+
+- name: Validate configured host feature values
+  ansible.builtin.assert:
+    that:
+      - item.value is boolean
+    fail_msg: >-
+      Host feature {{ item.key }} must be true or false.
+  loop: "{{ (host_features | default({})) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  changed_when: false
+
+- name: Validate detected host feature values
+  ansible.builtin.assert:
+    that:
+      - item.value is boolean
+    fail_msg: >-
+      Detected host feature {{ item.key }} must be true or false.
+  loop: "{{ (health_check_detected_features | default({})) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  changed_when: false
+
+- name: Validate monitoring module override values
+  ansible.builtin.assert:
+    that:
+      - item.value is boolean
+    fail_msg: >-
+      Monitoring module override {{ item.key }} must be true or false.
+  loop: "{{ (monitoring_modules | default({})) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  changed_when: false
+
+- name: Normalize effective host features
+  ansible.builtin.set_fact:
+    health_check_effective_features: >-
+      {{
+        health_check_feature_defaults
+        | combine(health_check_detected_features | default({}), recursive=true)
+        | combine(host_features | default({}), recursive=true)
+      }}
+  changed_when: false
+
+- name: Derive monitoring modules from effective features
+  ansible.builtin.set_fact:
+    health_check_feature_modules:
+      docker: "{{ health_check_effective_features.docker | bool }}"
+      proxmox: "{{ health_check_effective_features.proxmox | bool }}"
+  changed_when: false
+
+- name: Normalize effective monitoring modules
+  ansible.builtin.set_fact:
+    health_check_effective_modules: >-
+      {{
+        health_check_monitoring_module_defaults
+        | combine(health_check_feature_modules, recursive=true)
+        | combine(monitoring_modules | default({}), recursive=true)
+      }}
+  changed_when: false
+
+- name: Require capabilities for enabled technology modules
+  ansible.builtin.assert:
+    that:
+      - >-
+        not (health_check_effective_modules.docker | bool)
+        or (health_check_effective_features.docker | bool)
+      - >-
+        not (health_check_effective_modules.proxmox | bool)
+        or (health_check_effective_features.proxmox | bool)
+    fail_msg: >-
+      A technology monitoring module cannot be enabled unless its matching
+      host feature is enabled. Override host_features when detection is wrong.
+  changed_when: false

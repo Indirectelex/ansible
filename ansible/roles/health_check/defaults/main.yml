@@ -17,6 +17,20 @@ health_check_load_critical_per_cpu: 2.0
 health_check_report_dir: "{{ playbook_dir }}/../reports"
 health_check_state_dir: "{{ playbook_dir }}/../.state/health_check"
 
+# Known host capabilities. Automatic discovery can populate
+# health_check_detected_features later; inventory host_features always wins.
+health_check_feature_defaults:
+  proxmox: false
+  docker: false
+
+health_check_detected_features: {}
+
+# Optional technology modules are enabled from effective host features.
+# Inventory monitoring_modules may explicitly disable an available module.
+health_check_monitoring_module_defaults:
+  docker: false
+  proxmox: false
+
 # Exact systemd unit names that should not produce warnings.
 health_check_failed_service_allowlist: []
 
