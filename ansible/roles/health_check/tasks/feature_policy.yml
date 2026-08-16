@@ -58,6 +58,8 @@
     health_check_feature_modules:
       docker: "{{ health_check_effective_features.docker | bool }}"
       proxmox: "{{ health_check_effective_features.proxmox | bool }}"
+      zfs: "{{ health_check_effective_features.zfs | bool }}"
+      smart: "{{ health_check_effective_features.smart | bool }}"
   changed_when: false
 
 - name: Normalize effective monitoring modules
@@ -79,6 +81,12 @@
       - >-
         not (health_check_effective_modules.proxmox | bool)
         or (health_check_effective_features.proxmox | bool)
+      - >-
+        not (health_check_effective_modules.zfs | bool)
+        or (health_check_effective_features.zfs | bool)
+      - >-
+        not (health_check_effective_modules.smart | bool)
+        or (health_check_effective_features.smart | bool)
     fail_msg: >-
       A technology monitoring module cannot be enabled unless its matching
       host feature is enabled. Override host_features when detection is wrong.

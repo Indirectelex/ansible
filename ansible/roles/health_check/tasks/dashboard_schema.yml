@@ -124,6 +124,23 @@
   when: health_check_report.proxmox_collection_failed | default(false) | bool
   changed_when: false
 
+- name: Add standardized module status reasons
+  ansible.builtin.set_fact:
+    health_check_status_reasons: >-
+      {{
+        health_check_status_reasons
+        + [
+          (item.check | string)
+          ~ ': '
+          ~ (item.summary | string)
+        ]
+      }}
+  loop: "{{ health_check_report.module_results | default([]) }}"
+  loop_control:
+    label: "{{ item.check }}"
+  when: item.status != 'healthy'
+  changed_when: false
+
 - name: Build dashboard metric definitions
   ansible.builtin.set_fact:
     health_check_dashboard_metrics:
@@ -485,6 +502,25 @@
         ]
       }}
   when: health_check_report.os_update_automation_enabled | bool
+  changed_when: false
+
+- name: Add standardized monitoring module section
+  ansible.builtin.set_fact:
+    health_check_dashboard_sections: >-
+      {{
+        health_check_dashboard_sections
+        + [
+          {
+            'id': 'monitoring_modules',
+            'label': 'Monitoring modules',
+            'category': 'health',
+            'display': 'table',
+            'order': 5,
+            'items': health_check_report.module_results
+          }
+        ]
+      }}
+  when: health_check_report.module_results | default([]) | length > 0
   changed_when: false
 
 - name: Add Docker dashboard section

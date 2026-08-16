@@ -22,6 +22,22 @@ Patch posture: **{{ health_check_report.patch_posture_status }}**
 - Time synchronization required: {{ health_check_report.time_sync_required }}
 - Time synchronization check return code: {{ health_check_report.time_sync_check_rc }}
 
+## Monitoring modules
+
+{% if health_check_report.module_results | default([]) | length > 0 %}
+{% for result in health_check_report.module_results %}
+### {{ result.check | upper }} — {{ result.status | upper }}
+
+{{ result.summary }}
+
+```json
+{{ result.details | to_nice_json }}
+```
+{% endfor %}
+{% else %}
+No optional monitoring modules were applicable.
+{% endif %}
+
 ## Security and maintenance
 
 - Patch policy: {{ health_check_report.patch_policy }}

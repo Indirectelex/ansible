@@ -1,0 +1,46 @@
+---
+- name: Collect ZFS pool status
+  ansible.builtin.command:
+    argv:
+      - zpool
+      - status
+      - -pP
+  register: health_check_zfs_status
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.zfs | bool
+
+- name: Collect ZFS pool capacity
+  ansible.builtin.command:
+    argv:
+      - zpool
+      - list
+      - -Hp
+      - -o
+      - name,size,alloc,free,cap,health
+  register: health_check_zfs_list
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.zfs | bool
+
+- name: Normalize ZFS module result
+  ansible.builtin.set_fact:
+    health_check_zfs_result: >-
+      {{
+        health_check_zfs_status.stdout
+        | default('')
+        | zfs_module_result(
+            health_check_zfs_list.stdout | default(''),
+            health_check_zfs_status.rc | default(1) | int,
+            health_check_zfs_list.rc | default(1) | int
+          )
+      }}
+  when: health_check_effective_modules.zfs | bool
+  changed_when: false
+
+- name: Record ZFS module result
+  ansible.builtin.set_fact:
+    health_check_module_results: >-
+      {{ health_check_module_results + [health_check_zfs_result] }}
+  when: health_check_effective_modules.zfs | bool
+  changed_when: false

@@ -16,6 +16,24 @@
   changed_when: false
   failed_when: false
 
+- name: Detect ZFS command
+  ansible.builtin.command:
+    argv:
+      - zpool
+      - --version
+  register: health_check_detected_zfs_command
+  changed_when: false
+  failed_when: false
+
+- name: Detect SMART command
+  ansible.builtin.command:
+    argv:
+      - smartctl
+      - --version
+  register: health_check_detected_smart_command
+  changed_when: false
+  failed_when: false
+
 - name: Record detected host features
   ansible.builtin.set_fact:
     health_check_detected_features:
@@ -23,4 +41,8 @@
         {{ (health_check_detected_docker_command.rc | default(127) | int) == 0 }}
       proxmox: >-
         {{ (health_check_detected_proxmox_command.rc | default(127) | int) == 0 }}
+      zfs: >-
+        {{ (health_check_detected_zfs_command.rc | default(127) | int) == 0 }}
+      smart: >-
+        {{ (health_check_detected_smart_command.rc | default(127) | int) == 0 }}
   changed_when: false

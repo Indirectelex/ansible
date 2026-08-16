@@ -91,6 +91,12 @@
 - name: Run Proxmox monitoring module
   ansible.builtin.include_tasks: modules/proxmox.yml
 
+- name: Run ZFS monitoring module
+  ansible.builtin.include_tasks: modules/zfs.yml
+
+- name: Run SMART monitoring module
+  ansible.builtin.include_tasks: modules/smart.yml
+
 - name: Calculate health metrics
   ansible.builtin.set_fact:
     health_check_disk_percent: >-
@@ -142,6 +148,12 @@
           health_check_disk_percent | int >= health_check_disk_critical_percent
           or health_check_inode_percent | int >= health_check_inode_critical_percent
           or health_check_memory_percent | float >= health_check_memory_critical_percent
+          or (
+            health_check_module_results
+            | selectattr('status', 'equalto', 'critical')
+            | list
+            | length > 0
+          )
         )
         else 'WARNING'
         if (
@@ -149,6 +161,12 @@
           or health_check_inode_percent | int >= health_check_inode_warning_percent
           or health_check_memory_percent | float >= health_check_memory_warning_percent
           or health_check_failed_service_count | int > 0
+          or (
+            health_check_module_results
+            | selectattr('status', 'in', ['warning', 'unknown'])
+            | list
+            | length > 0
+          )
         )
         else 'OK'
       }}

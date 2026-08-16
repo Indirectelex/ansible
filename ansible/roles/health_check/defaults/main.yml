@@ -22,6 +22,8 @@ health_check_state_dir: "{{ playbook_dir }}/../.state/health_check"
 health_check_feature_defaults:
   proxmox: false
   docker: false
+  zfs: false
+  smart: false
 
 health_check_detected_features: {}
 
@@ -30,6 +32,8 @@ health_check_detected_features: {}
 health_check_monitoring_module_defaults:
   docker: false
   proxmox: false
+  zfs: false
+  smart: false
 
 # Exact systemd unit names that should not produce warnings.
 health_check_failed_service_allowlist: []

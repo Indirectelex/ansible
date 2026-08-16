@@ -1,0 +1,62 @@
+---
+- name: Scan SMART-accessible devices
+  ansible.builtin.command:
+    argv:
+      - smartctl
+      - --scan-open
+      - -j
+  register: health_check_smart_scan
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.smart | bool
+
+- name: Normalize SMART device inventory
+  ansible.builtin.set_fact:
+    health_check_smart_devices: >-
+      {{
+        health_check_smart_scan.stdout
+        | default('')
+        | smart_scan_devices
+      }}
+  when: health_check_effective_modules.smart | bool
+  changed_when: false
+
+- name: Collect SMART device health
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['smartctl', '-a', '-j']
+        + (
+          ['-d', item.type]
+          if item.type is defined
+          else []
+        )
+        + [item.name]
+      }}
+  loop: "{{ health_check_smart_devices | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: health_check_smart_device_collection
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.smart | bool
+
+- name: Normalize SMART module result
+  ansible.builtin.set_fact:
+    health_check_smart_result: >-
+      {{
+        health_check_smart_device_collection.results
+        | default([])
+        | smart_module_result(
+            health_check_smart_scan.rc | default(1) | int
+          )
+      }}
+  when: health_check_effective_modules.smart | bool
+  changed_when: false
+
+- name: Record SMART module result
+  ansible.builtin.set_fact:
+    health_check_module_results: >-
+      {{ health_check_module_results + [health_check_smart_result] }}
+  when: health_check_effective_modules.smart | bool
+  changed_when: false
