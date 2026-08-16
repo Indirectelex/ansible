@@ -207,7 +207,7 @@
     health_check_patch_policy: >-
       {{
         'all_security_manual_approval'
-        if inventory_hostname in groups.get('proxmox_hosts', [])
+        if health_check_effective_features.proxmox | bool
         else 'os_managed_security'
         if health_check_os_update_automation_enabled | bool
         else 'monitor_only'

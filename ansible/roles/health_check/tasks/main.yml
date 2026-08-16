@@ -1,4 +1,7 @@
 ---
+- name: Discover host capabilities
+  ansible.builtin.include_tasks: feature_discovery.yml
+
 - name: Normalize host features and monitoring modules
   ansible.builtin.include_tasks: feature_policy.yml
 
@@ -191,6 +194,8 @@
       kernel: "{{ ansible_facts.kernel }}"
       uptime_days: >-
         {{ (ansible_facts.uptime_seconds | int / 86400) | round(1) }}
+      detected_features: "{{ health_check_detected_features }}"
+      declared_feature_overrides: "{{ host_features | default({}) }}"
       features: "{{ health_check_effective_features }}"
       monitoring_modules: "{{ health_check_effective_modules }}"
       root_disk_percent: "{{ health_check_disk_percent }}"

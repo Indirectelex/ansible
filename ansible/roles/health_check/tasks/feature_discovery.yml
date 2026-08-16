@@ -1,0 +1,26 @@
+---
+- name: Detect Docker command
+  ansible.builtin.command:
+    argv:
+      - docker
+      - --version
+  register: health_check_detected_docker_command
+  changed_when: false
+  failed_when: false
+
+- name: Detect Proxmox command
+  ansible.builtin.command:
+    argv:
+      - pveversion
+  register: health_check_detected_proxmox_command
+  changed_when: false
+  failed_when: false
+
+- name: Record detected host features
+  ansible.builtin.set_fact:
+    health_check_detected_features:
+      docker: >-
+        {{ (health_check_detected_docker_command.rc | default(127) | int) == 0 }}
+      proxmox: >-
+        {{ (health_check_detected_proxmox_command.rc | default(127) | int) == 0 }}
+  changed_when: false
