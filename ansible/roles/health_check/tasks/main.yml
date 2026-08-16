@@ -80,6 +80,11 @@
 - name: Build read-only patch intelligence
   ansible.builtin.include_tasks: patch_intelligence.yml
 
+- name: Initialize standardized module results
+  ansible.builtin.set_fact:
+    health_check_module_results: []
+  changed_when: false
+
 - name: Run Docker monitoring module
   ansible.builtin.include_tasks: modules/docker.yml
 
@@ -164,6 +169,7 @@
       declared_feature_overrides: "{{ host_features | default({}) }}"
       features: "{{ health_check_effective_features }}"
       monitoring_modules: "{{ health_check_effective_modules }}"
+      module_results: "{{ health_check_module_results }}"
       root_disk_percent: "{{ health_check_disk_percent }}"
       root_inode_percent: "{{ health_check_inode_percent }}"
       memory_percent: "{{ health_check_memory_percent }}"

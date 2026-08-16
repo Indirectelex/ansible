@@ -17,3 +17,58 @@
   changed_when: false
   failed_when: false
   when: health_check_effective_modules.proxmox | bool
+
+- name: Identify inactive Proxmox storage for module result
+  ansible.builtin.set_fact:
+    health_check_proxmox_module_inactive_storage: >-
+      {{
+        health_check_proxmox_storage.stdout_lines
+        | default([])
+        | select('search', '\\sinactive\\s')
+        | list
+      }}
+  when: health_check_effective_modules.proxmox | bool
+  changed_when: false
+
+- name: Record Proxmox module result
+  ansible.builtin.set_fact:
+    health_check_module_results: >-
+      {{
+        health_check_module_results
+        + [
+          {
+            'check': 'proxmox',
+            'status':
+              'unknown'
+              if (
+                health_check_proxmox_version.rc | default(1) | int != 0
+                or health_check_proxmox_storage.rc | default(1) | int != 0
+              )
+              else 'warning'
+              if health_check_proxmox_module_inactive_storage | length > 0
+              else 'healthy',
+            'summary':
+              'Proxmox collection unavailable'
+              if (
+                health_check_proxmox_version.rc | default(1) | int != 0
+                or health_check_proxmox_storage.rc | default(1) | int != 0
+              )
+              else (
+                (health_check_proxmox_module_inactive_storage | length | string)
+                ~ ' inactive Proxmox storage target(s)'
+              )
+              if health_check_proxmox_module_inactive_storage | length > 0
+              else 'Proxmox collection completed',
+            'details': {
+              'version_rc':
+                health_check_proxmox_version.rc | default(1) | int,
+              'storage_rc':
+                health_check_proxmox_storage.rc | default(1) | int,
+              'inactive_storage':
+                health_check_proxmox_module_inactive_storage
+            }
+          }
+        ]
+      }}
+  when: health_check_effective_modules.proxmox | bool
+  changed_when: false

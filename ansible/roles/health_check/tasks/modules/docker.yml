@@ -19,3 +19,36 @@
   changed_when: false
   failed_when: false
   when: health_check_effective_modules.docker | bool
+
+- name: Record Docker module result
+  ansible.builtin.set_fact:
+    health_check_module_results: >-
+      {{
+        health_check_module_results
+        + [
+          {
+            'check': 'docker',
+            'status':
+              'unknown'
+              if (
+                health_check_docker_info.rc | default(1) | int != 0
+                or health_check_docker_containers.rc | default(1) | int != 0
+              )
+              else 'healthy',
+            'summary':
+              'Docker collection unavailable'
+              if (
+                health_check_docker_info.rc | default(1) | int != 0
+                or health_check_docker_containers.rc | default(1) | int != 0
+              )
+              else 'Docker collection completed',
+            'details': {
+              'info_rc': health_check_docker_info.rc | default(1) | int,
+              'containers_rc':
+                health_check_docker_containers.rc | default(1) | int
+            }
+          }
+        ]
+      }}
+  when: health_check_effective_modules.docker | bool
+  changed_when: false
