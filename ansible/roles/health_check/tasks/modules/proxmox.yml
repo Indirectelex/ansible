@@ -1,0 +1,19 @@
+---
+- name: Collect Proxmox version
+  ansible.builtin.command:
+    argv:
+      - pveversion
+  register: health_check_proxmox_version
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.proxmox | bool
+
+- name: Collect Proxmox storage status
+  ansible.builtin.command:
+    argv:
+      - pvesm
+      - status
+  register: health_check_proxmox_storage
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.proxmox | bool

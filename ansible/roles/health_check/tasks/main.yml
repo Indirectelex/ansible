@@ -80,45 +80,11 @@
 - name: Build read-only patch intelligence
   ansible.builtin.include_tasks: patch_intelligence.yml
 
-- name: Collect Docker information
-  ansible.builtin.command:
-    argv:
-      - docker
-      - info
-  register: health_check_docker_info
-  changed_when: false
-  failed_when: false
-  when: health_check_effective_modules.docker | bool
+- name: Run Docker monitoring module
+  ansible.builtin.include_tasks: modules/docker.yml
 
-- name: Collect Docker container state
-  ansible.builtin.command:
-    argv:
-      - docker
-      - ps
-      - --all
-  register: health_check_docker_containers
-  changed_when: false
-  failed_when: false
-  when: health_check_effective_modules.docker | bool
-
-- name: Collect Proxmox version
-  ansible.builtin.command:
-    argv:
-      - pveversion
-  register: health_check_proxmox_version
-  changed_when: false
-  failed_when: false
-  when: health_check_effective_modules.proxmox | bool
-
-- name: Collect Proxmox storage status
-  ansible.builtin.command:
-    argv:
-      - pvesm
-      - status
-  register: health_check_proxmox_storage
-  changed_when: false
-  failed_when: false
-  when: health_check_effective_modules.proxmox | bool
+- name: Run Proxmox monitoring module
+  ansible.builtin.include_tasks: modules/proxmox.yml
 
 - name: Calculate health metrics
   ansible.builtin.set_fact:

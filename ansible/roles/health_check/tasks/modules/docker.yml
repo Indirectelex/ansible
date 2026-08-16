@@ -1,0 +1,21 @@
+---
+- name: Collect Docker information
+  ansible.builtin.command:
+    argv:
+      - docker
+      - info
+  register: health_check_docker_info
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.docker | bool
+
+- name: Collect Docker container state
+  ansible.builtin.command:
+    argv:
+      - docker
+      - ps
+      - --all
+  register: health_check_docker_containers
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.docker | bool
