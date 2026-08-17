@@ -1,8 +1,20 @@
+{#
+TEACHER NOTE — CHAPTER 9: Human-readable report view
+Purpose: render the same health_check_report used by the browser into a portable
+Markdown explanation for troubleshooting without JavaScript.
+Inputs: final versioned report model. Output: reports/<host>.md.
+CHANGE INSTRUCTIONS: report-field changes must stay aligned with dashboard_schema,
+JSON output, browser rendering, and template tests; do not calculate policy here.
+#}
 # Health report: {{ inventory_hostname }}
 
 Generated: {{ health_check_report.generated_at }}
 
 Health status: **{{ health_check_report.status }}**
+
+{% if health_check_report.status == 'WATCH' %}
+Stable health evidence remains under observation. No active deterioration was detected in this report.
+{% endif %}
 
 Patch posture: **{{ health_check_report.patch_posture_status }}**
 

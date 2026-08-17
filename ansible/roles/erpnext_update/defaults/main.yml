@@ -1,4 +1,10 @@
 ---
+# TEACHER NOTE — ERPNext CHAPTER 0: Controlled-update policy
+# Purpose: keep site identity, release delay, Docker paths, backup retention,
+# health endpoints, and preflight switches in one auditable configuration file.
+# CHANGE INSTRUCTIONS: treat paths and container names as production contracts;
+# verify check and backup modes before allowing an update-mode run.
+
 # ERPNext controlled update settings
 
 erpnext_update_mode: check

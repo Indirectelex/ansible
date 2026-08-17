@@ -1,4 +1,11 @@
-"""Tests for the APT patch-intelligence filter."""
+"""Tests for the APT patch-intelligence filter.
+
+TEACHER NOTE — CHAPTER 7
+Fixtures explain how cached APT lines, impact rules, trusted history, and OS
+automation combine into patch posture.
+CHANGE INSTRUCTIONS: add boundary/transition fixtures before changing parsing,
+first-match classification, history clearing, or posture precedence.
+"""
 
 from __future__ import annotations
 

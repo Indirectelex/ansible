@@ -1,4 +1,11 @@
 ---
+# TEACHER NOTE — CHAPTER 6: Collection trust policy
+# Purpose: distinguish an applicable collector failure from a technology that
+# is intentionally not applicable, then prevent missing evidence from reading OK.
+# Outputs: collection failure facts, overall status changes, and report fields.
+# CHANGE INSTRUCTIONS: every new collector must define applicability and failure
+# semantics; test failed command, disabled module, and successful collection.
+
 - name: Determine platform applicability
   ansible.builtin.set_fact:
     health_check_docker_applicable: >-

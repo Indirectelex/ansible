@@ -1,0 +1,81 @@
+---
+# TEACHER NOTE — CHAPTER 5.5: Proxmox Backup Server module
+# Purpose: collect component versions and configured datastores, measure each
+# datastore path, then normalize capacity against common disk thresholds.
+# CHANGE INSTRUCTIONS: keep datastore paths validated and per-datastore failures
+# visible; update pbs_health.py fixtures and renderer tests with schema changes.
+
+- name: Collect Proxmox Backup Server component versions
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/proxmox-backup-manager
+      - versions
+      - --output-format
+      - json
+  register: health_check_pbs_versions
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.pbs | bool
+
+- name: Collect configured Proxmox Backup Server datastores
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/proxmox-backup-manager
+      - datastore
+      - list
+      - --output-format
+      - json
+  register: health_check_pbs_datastore_list
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.pbs | bool
+
+- name: Normalize configured PBS datastore paths
+  ansible.builtin.set_fact:
+    health_check_pbs_datastores: >-
+      {{
+        health_check_pbs_datastore_list.stdout
+        | default('[]')
+        | pbs_datastore_paths
+      }}
+  changed_when: false
+  when: health_check_effective_modules.pbs | bool
+
+- name: Collect PBS datastore filesystem capacity
+  ansible.builtin.command:
+    argv:
+      - df
+      - -P
+      - "{{ item.path }}"
+  loop: "{{ health_check_pbs_datastores | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: health_check_pbs_datastore_usage
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.pbs | bool
+
+- name: Normalize Proxmox Backup Server module result
+  ansible.builtin.set_fact:
+    health_check_pbs_result: >-
+      {{
+        health_check_pbs_versions.stdout
+        | default('')
+        | pbs_module_result(
+            health_check_pbs_versions.rc | default(1) | int,
+            health_check_pbs_datastore_list.stdout | default(''),
+            health_check_pbs_datastore_list.rc | default(1) | int,
+            health_check_pbs_datastore_usage.results | default([]),
+            health_check_disk_warning_percent,
+            health_check_disk_critical_percent
+          )
+      }}
+  changed_when: false
+  when: health_check_effective_modules.pbs | bool
+
+- name: Record Proxmox Backup Server module result
+  ansible.builtin.set_fact:
+    health_check_module_results: >-
+      {{ health_check_module_results + [health_check_pbs_result] }}
+  changed_when: false
+  when: health_check_effective_modules.pbs | bool

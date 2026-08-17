@@ -1,4 +1,12 @@
-"""Filters for read-only APT patch intelligence."""
+"""Filters for read-only APT patch intelligence.
+
+TEACHER NOTE — CHAPTER 7
+Purpose: convert cached ``apt-get --simulate`` and automation observations into
+trusted package groups, durable pending history, and one patch-posture state.
+Inputs are strings/mappings collected by Ansible; outputs are JSON-safe values.
+CHANGE INSTRUCTIONS: keep parsing pure and first-match classification explicit;
+add transition fixtures whenever a rule, field, or posture boundary changes.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +15,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 
+# CHAPTER 7.1 — Package-line parsing and first-match impact classification
 def _matching_rule(
     package_name: str,
     rules: Iterable[Mapping[str, str]],
@@ -158,6 +167,9 @@ def _security_package_identity(package: Mapping[str, Any]) -> str:
     )
 
 
+# CHAPTER 7.2 — Trusted first-seen history across observations
+# An untrusted scan cannot prove a package disappeared, so it must not clear the
+# prior trusted state.
 def health_check_merge_pending_security_state(
     security_packages: Mapping[str, Iterable[Mapping[str, Any]]] | None,
     previous_state: Mapping[str, Any] | None,
@@ -263,6 +275,7 @@ def health_check_merge_pending_security_state(
     }
 
 
+# CHAPTER 7.3 — Final posture decision from package and automation evidence
 def health_check_determine_patch_posture(
     apt_return_code: int | str,
     counts_trusted: bool,
@@ -303,6 +316,7 @@ def health_check_determine_patch_posture(
     return "CURRENT"
 
 
+# CHAPTER 7.4 — Ansible filter registration boundary
 class FilterModule:
     """Expose patch-intelligence filters to Ansible."""
 

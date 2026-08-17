@@ -1,4 +1,12 @@
 ---
+# TEACHER NOTE — CHAPTER 8: SMART and physical storage module
+# Purpose: scan accessible devices, collect JSON health and kernel evidence,
+# compare prior counters, correlate Proxmox guest ownership, and append one result.
+# WATCH means stable observation; WARNING requires deterioration/credible evidence.
+# CHANGE INSTRUCTIONS: status changes belong in storage_health.py with fixtures;
+# keep collection read-only and preserve prior-report/topology inputs.
+
+# CHAPTER 8.4 — Discover physical devices and collect current evidence
 - name: Scan SMART-accessible devices
   ansible.builtin.command:
     argv:
@@ -6,6 +14,19 @@
       - --scan-open
       - -j
   register: health_check_smart_scan
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.smart | bool
+
+- name: Collect recent kernel storage evidence
+  ansible.builtin.command:
+    argv:
+      - journalctl
+      - --dmesg
+      - --since={{ health_check_storage_kernel_since }}
+      - --no-pager
+      - --output=short-iso
+  register: health_check_storage_kernel_log
   changed_when: false
   failed_when: false
   when: health_check_effective_modules.smart | bool
@@ -41,6 +62,7 @@
   failed_when: false
   when: health_check_effective_modules.smart | bool
 
+# CHAPTER 8.5 — Interpret evidence with history before topology enrichment
 - name: Normalize SMART module result
   ansible.builtin.set_fact:
     health_check_smart_result: >-
@@ -48,7 +70,51 @@
         health_check_smart_device_collection.results
         | default([])
         | smart_module_result(
-            health_check_smart_scan.rc | default(1) | int
+            health_check_smart_scan.rc | default(1) | int,
+            health_check_storage_kernel_log.stdout | default(''),
+            (
+              health_check_previous_report.module_results
+              | default([])
+              | selectattr('check', 'equalto', 'smart')
+              | list
+              | first
+            ) | default({}),
+            health_check_observed_at,
+            health_check_previous_report.generated_at | default(none),
+            health_check_proxmox_vm_configs.results | default([])
+          )
+      }}
+  when: health_check_effective_modules.smart | bool
+  changed_when: false
+
+# CHAPTER 8.6 — Attach live consumer and pool paths to physical-device cards
+- name: Correlate physical disks with guest ZFS membership
+  ansible.builtin.set_fact:
+    health_check_storage_topology_result: >-
+      {{
+        health_check_proxmox_vm_configs.results
+        | default([])
+        | proxmox_guest_storage_topology(
+            health_check_proxmox_qga_ping.results | default([]),
+            health_check_proxmox_guest_lsblk.results | default([]),
+            health_check_proxmox_guest_zpool.results | default([]),
+            health_check_smart_result,
+            inventory_hostname,
+            health_check_observed_at
+          )
+      }}
+  when:
+    - health_check_effective_modules.smart | bool
+    - health_check_effective_modules.proxmox | default(false) | bool
+  changed_when: false
+
+- name: Attach live storage paths to SMART devices
+  ansible.builtin.set_fact:
+    health_check_smart_result: >-
+      {{
+        health_check_smart_result
+        | attach_storage_topology(
+            health_check_storage_topology_result | default({})
           )
       }}
   when: health_check_effective_modules.smart | bool

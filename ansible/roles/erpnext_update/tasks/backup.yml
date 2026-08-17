@@ -1,4 +1,11 @@
 ---
+# TEACHER NOTE — ERPNext CHAPTER 3: Verified recovery checkpoint
+# Purpose: create a complete Frappe backup, copy it outside the container, save
+# Compose/config context, verify required artifacts, and enforce retention.
+# Outputs: a timestamped host-side recovery directory approved by assertions.
+# CHANGE INSTRUCTIONS: never reduce artifact verification casually; test backup
+# creation and restore assumptions before changing paths or retention.
+
 - name: Generate ERPNext backup timestamp
   ansible.builtin.set_fact:
     erpnext_backup_stamp: "{{ now(utc=true, fmt='%Y%m%d_%H%M%S') }}"

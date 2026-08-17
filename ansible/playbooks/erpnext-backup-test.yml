@@ -1,4 +1,10 @@
 ---
+# TEACHER NOTE — ERPNext CHAPTER 3: Backup verification entry point
+# Purpose: run the backup subworkflow alone against docker-ct so recovery
+# artifacts can be verified without requesting an application update.
+# CHANGE INSTRUCTIONS: backup behaviour belongs in the role task file; keep
+# this play thin and validate on a non-destructive maintenance window.
+
 - name: Test verified ERPNext backup
   hosts: docker-ct
   gather_facts: false

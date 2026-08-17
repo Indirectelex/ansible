@@ -1,4 +1,10 @@
 ---
+# TEACHER NOTE — ERPNext CHAPTER 2: Controlled update entry point
+# Purpose: invoke the ERPNext role in update mode after its internal release,
+# delay, backup, storage, migration, and health gates approve the operation.
+# CHANGE INSTRUCTIONS: do not add update commands here; preserve role safety
+# gates and test backup/rollback assumptions before production execution.
+
 - name: Controlled ERPNext automatic update
   hosts: docker-ct
   gather_facts: false

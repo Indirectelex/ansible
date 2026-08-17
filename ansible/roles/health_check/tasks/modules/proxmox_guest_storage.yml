@@ -1,0 +1,137 @@
+---
+# TEACHER NOTE — CHAPTER 8: Proxmox-to-guest storage evidence
+# Purpose: collect VM configs, physical by-id passthroughs, QEMU Guest Agent
+# reachability, guest block identity, and guest ZFS membership.
+# Outputs are raw registered results joined later by storage_health.py.
+# CHANGE INSTRUCTIONS: keep guest commands fixed/read-only and time-bounded;
+# preserve stable by-id/drive-scsi/PARTUUID joins and update topology fixtures.
+
+# CHAPTER 8.1 — Select QEMU guests and physical passthrough consumers
+- name: Discover Proxmox virtual machines for guest storage correlation
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - /cluster/resources
+      - --type
+      - vm
+      - --output-format
+      - json
+  register: health_check_proxmox_vm_inventory
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.proxmox | bool
+
+- name: Normalize Proxmox virtual machine identifiers
+  ansible.builtin.set_fact:
+    health_check_proxmox_vm_ids: >-
+      {{
+        health_check_proxmox_vm_inventory.stdout
+        | default('[]')
+        | proxmox_vm_ids(inventory_hostname, true)
+      }}
+  changed_when: false
+  when: health_check_effective_modules.proxmox | bool
+
+- name: Collect Proxmox virtual machine disk mappings
+  ansible.builtin.command:
+    argv:
+      - qm
+      - config
+      - "{{ item }}"
+  loop: "{{ health_check_proxmox_vm_ids | default([]) }}"
+  loop_control:
+    label: "VM {{ item }}"
+  register: health_check_proxmox_vm_configs
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.proxmox | bool
+
+- name: Select guests with physical by-id disk passthroughs
+  ansible.builtin.set_fact:
+    health_check_proxmox_storage_vm_ids: >-
+      {{
+        health_check_proxmox_vm_configs.results
+        | default([])
+        | proxmox_passthrough_vm_ids
+      }}
+  changed_when: false
+  when: health_check_effective_modules.proxmox | bool
+
+# CHAPTER 8.2 — Limit live guest observation to responsive agents
+- name: Test QEMU Guest Agent for storage guests
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/timeout
+      - "20"
+      - /usr/sbin/qm
+      - agent
+      - "{{ item }}"
+      - ping
+  loop: "{{ health_check_proxmox_storage_vm_ids | default([]) }}"
+  loop_control:
+    label: "VM {{ item }}"
+  register: health_check_proxmox_qga_ping
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.proxmox | bool
+
+- name: Select storage guests with a responsive QEMU Guest Agent
+  ansible.builtin.set_fact:
+    health_check_proxmox_qga_vm_ids: >-
+      {{
+        health_check_proxmox_qga_ping.results
+        | default([])
+        | selectattr('rc', 'defined')
+        | selectattr('rc', 'equalto', 0)
+        | map(attribute='item')
+        | list
+      }}
+  changed_when: false
+  when: health_check_effective_modules.proxmox | bool
+
+# CHAPTER 8.3 — Collect both sides of the guest disk-to-pool join
+- name: Collect guest block identities through QEMU Guest Agent
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/timeout
+      - "20"
+      - /usr/sbin/qm
+      - guest
+      - exec
+      - "{{ item }}"
+      - --
+      - /usr/bin/lsblk
+      - -J
+      - -b
+      - -p
+      - -o
+      - NAME,TYPE,PKNAME,SIZE,MODEL,SERIAL,WWN,PARTUUID
+  loop: "{{ health_check_proxmox_qga_vm_ids | default([]) }}"
+  loop_control:
+    label: "VM {{ item }}"
+  register: health_check_proxmox_guest_lsblk
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.proxmox | bool
+
+- name: Collect live guest ZFS membership through QEMU Guest Agent
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/timeout
+      - "20"
+      - /usr/sbin/qm
+      - guest
+      - exec
+      - "{{ item }}"
+      - --
+      - /usr/sbin/zpool
+      - status
+      - -pP
+  loop: "{{ health_check_proxmox_qga_vm_ids | default([]) }}"
+  loop_control:
+    label: "VM {{ item }}"
+  register: health_check_proxmox_guest_zpool
+  changed_when: false
+  failed_when: false
+  when: health_check_effective_modules.proxmox | bool

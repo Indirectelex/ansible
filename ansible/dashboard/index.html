@@ -1,4 +1,13 @@
 <!doctype html>
+<!--
+  TEACHER NOTE — CHAPTER 13: Browser document skeleton
+  Purpose: provide stable semantic regions and element IDs for dashboard.js;
+  presentation belongs in CSS and data/policy belongs in reports/server code.
+  Inputs: published CSS/JS. Output: accessible navigation, inspector, activity
+  drawer, and detail dialog mount points.
+  CHANGE INSTRUCTIONS: IDs and classes are cross-file contracts. Update JS,
+  CSS, layout tests, cache-busting versions, and these notes together.
+-->
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -7,9 +16,10 @@
     content="width=device-width, initial-scale=1"
   >
   <title>Infrastructure Health &amp; Patch Posture</title>
-  <link rel="stylesheet" href="assets/dashboard.css?v=11">
+  <link rel="stylesheet" href="assets/dashboard.css?v=27">
 </head>
 <body>
+  <!-- CHAPTER 13.1 — Global identity, freshness, and manual refresh -->
   <header class="page-header">
     <div>
       <p class="eyebrow">Hackwell monitoring</p>
@@ -22,72 +32,87 @@
     </button>
   </header>
 
-  <div
-    id="health-check-status"
-    class="run-status"
-    role="status"
-    aria-live="polite"
-    hidden
-  ></div>
+  <!-- CHAPTER 13.2 — Two-pane fleet navigator and selected-node inspector -->
+  <main class="fleet-workspace">
+    <aside class="fleet-navigation" aria-label="Infrastructure navigation">
+      <header class="navigator-heading">
+        <strong>Server view</strong>
+        <span id="filter-count" class="filter-count" aria-live="polite"></span>
+      </header>
 
-  <section
-    id="fleet-summary"
-    class="fleet-summary"
-    aria-label="Fleet patch summary"
-    aria-live="polite"
-  >
-    <div class="empty-state">Loading fleet summary…</div>
-  </section>
+      <section class="fleet-list-panel" aria-label="Infrastructure hosts">
+        <div
+          id="host-grid"
+          class="fleet-tree"
+          role="tree"
+          aria-label="Monitored infrastructure"
+          aria-live="polite"
+        ></div>
+      </section>
+    </aside>
 
-  <details class="filter-panel">
-    <summary>Filter hosts</summary>
-    <section class="toolbar" aria-label="Report filters">
-      <label>
-        <span>Find a host</span>
-        <input
-          id="host-search"
-          type="search"
-          placeholder="Search by hostname"
-        >
-      </label>
-
-      <label>
-        <span>Health</span>
-        <select id="health-filter">
-          <option value="ALL">All health states</option>
-          <option value="CRITICAL">Critical</option>
-          <option value="WARNING">Warning</option>
-          <option value="UNREACHABLE">Unreachable</option>
-          <option value="OK">OK</option>
-          <option value="UNKNOWN">Unknown</option>
-        </select>
-      </label>
-
-      <label>
-        <span>Patch posture</span>
-        <select id="patch-filter">
-          <option value="ALL">All patch states</option>
-          <option value="ERROR">Data error</option>
-          <option value="AUTOMATION_ERROR">Automation error</option>
-          <option value="AUTOMATION_OVERDUE">Automation overdue</option>
-          <option value="REVIEW_REQUIRED">Review required</option>
-          <option value="ACTION_NEEDED">Action needed</option>
-          <option value="DATA_STALE">Data stale</option>
-          <option value="REBOOT_PENDING">Reboot pending</option>
-          <option value="INSTALLING">Installing</option>
-          <option value="SCHEDULED">Scheduled</option>
-          <option value="ROUTINE_MAINTENANCE">Routine maintenance</option>
-          <option value="CURRENT">Current</option>
-          <option value="UNKNOWN">Unknown</option>
-        </select>
-      </label>
+    <section
+      id="host-inspector"
+      class="host-inspector"
+      aria-label="Selected host summary"
+      aria-live="polite"
+    >
+      <div class="inspector-empty">
+        Select a host to see its summary.
+      </div>
     </section>
-  </details>
-
-  <main>
-    <div id="host-grid" class="host-grid" aria-live="polite"></div>
   </main>
 
+  <!-- CHAPTER 13.3 — Persistent fleet summary plus retractable action log -->
+  <section
+    id="activity-drawer"
+    class="activity-drawer"
+    aria-label="Fleet status and activity logs"
+  >
+    <div class="activity-drawer-top">
+      <section
+        id="fleet-summary"
+        class="fleet-summary"
+        aria-label="Fleet patch summary"
+        aria-live="polite"
+      >
+        <div class="empty-state">Loading fleet summary…</div>
+      </section>
+
+      <button
+        id="activity-drawer-toggle"
+        class="activity-drawer-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="activity-drawer-body"
+      >
+        <span>Logs</span>
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="m3 10 5-5 5 5"></path>
+        </svg>
+      </button>
+    </div>
+
+    <div id="activity-drawer-body" class="activity-drawer-body" hidden>
+      <section class="activity-log-panel" aria-label="Dashboard activity log">
+        <header class="activity-log-heading">
+          <strong>Activity log</strong>
+          <span id="activity-log-context">Idle</span>
+        </header>
+
+        <div
+          id="health-check-status"
+          class="run-status"
+          role="status"
+          aria-live="polite"
+        >No dashboard activity yet.</div>
+
+        <pre id="activity-log-output" class="activity-log-output">No dashboard command output yet.</pre>
+      </section>
+    </div>
+  </section>
+
+  <!-- CHAPTER 13.4 — Full host detail view rendered on demand -->
   <dialog id="host-dialog">
     <div class="dialog-header">
       <div>
@@ -107,6 +132,7 @@
     <div id="dialog-content"></div>
   </dialog>
 
-  <script src="assets/dashboard.js?v=11"></script>
+  <!-- CHAPTER 13.5 — Application startup; bump version after JS publication -->
+  <script src="assets/dashboard.js?v=30"></script>
 </body>
 </html>

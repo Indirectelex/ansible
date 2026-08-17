@@ -1,4 +1,10 @@
 ---
+# TEACHER NOTE — CHAPTER 6: Failed-service exception handling
+# Purpose: split raw systemd failures into effective and explicitly ignored
+# lists. The allowlist affects status but does not erase the observed line.
+# CHANGE INSTRUCTIONS: allowlist exact unit names only, explain every exception
+# in inventory, and verify both lists remain visible in the report.
+
 - name: Initialize classified failed-service lists
   ansible.builtin.set_fact:
     health_check_effective_failed_services: []

@@ -1,14 +1,23 @@
-"""Focused tests for the local dashboard health-check controller."""
+"""Focused tests for the local dashboard health-check controller.
+
+TEACHER NOTE — CHAPTERS 11, 12, AND 14
+These tests lock down loopback trust, manifest allowlisting, fixed commands,
+maintenance history, and bounded UniFi/controller behaviour.
+CHANGE INSTRUCTIONS: every route, trust check, query family, or job-state change
+needs a positive case, a rejection/failure case, and matching server notes.
+"""
 
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 
 SERVER_PATH = (
@@ -87,6 +96,379 @@ class DashboardServerTests(unittest.TestCase):
                 return snapshot
             time.sleep(0.01)
         self.fail("Health-check worker did not complete")
+
+    def test_unifi_summary_imports_fixed_prometheus_metrics(self) -> None:
+        def sample(
+            metric_name: str,
+            value: float,
+            **labels: str,
+        ) -> dict[str, object]:
+            return {
+                "metric": {"__name__": metric_name, "job": "unpoller", **labels},
+                "value": [1786900000, str(value)],
+            }
+
+        payload = {
+            "status": "success",
+            "data": {
+                "result": [
+                    sample("unpoller_controller_up", 1),
+                    sample("unpoller_site_aps", 1, subsystem="wlan", status="error"),
+                    sample("unpoller_site_switches", 5, subsystem="lan", status="error"),
+                    sample("unpoller_site_gateways", 1, subsystem="wan", status="ok"),
+                    sample("unpoller_site_users", 18, subsystem="lan", status="error"),
+                    sample("unpoller_site_users", 2, subsystem="wlan", status="error"),
+                    sample("unpoller_site_disconnected", 1, subsystem="lan", status="error"),
+                    sample("unpoller_site_disconnected", 2, subsystem="wlan", status="error"),
+                    sample("unpoller_site_latency_seconds", 0.002, subsystem="www", status="ok"),
+                    sample("unpoller_site_intenet_drops_total", 2, subsystem="www", status="ok"),
+                    sample(
+                        "unpoller_device_info",
+                        1,
+                        mac="68:d7:9a:68:24:49",
+                        name="Main switch",
+                        model="US624P",
+                        type="usw",
+                        ip="192.168.12.243",
+                    ),
+                    sample(
+                        "unpoller_device_temperature_celsius",
+                        42,
+                        name="Main switch",
+                    ),
+                    sample(
+                        "unpoller_device_uptime_seconds",
+                        0,
+                        name="Main switch",
+                    ),
+                ],
+            },
+        }
+        requested_urls: list[str] = []
+
+        def opener(request: object, **_kwargs: object) -> io.BytesIO:
+            requested_urls.append(request.full_url)
+            parsed = urlsplit(request.full_url)
+            query = parse_qs(parsed.query).get("query", [""])[0]
+            response_payload = payload
+            if parsed.path.endswith("/query_range"):
+                results = []
+                if "unpoller_site_users" in query:
+                    results = [
+                        {
+                            "metric": {},
+                            "values": [
+                                [1786813600, "19"],
+                                [1786900000, "20"],
+                            ],
+                        },
+                    ]
+                response_payload = {
+                    "status": "success",
+                    "data": {"resultType": "matrix", "result": results},
+                }
+            elif "__name__=~" not in query:
+                results = []
+                if "topk(5" in query and "errors_total" in query:
+                    results = [
+                        {
+                            "metric": {"name": "Main switch", "port": "8"},
+                            "value": [1786900000, "4325"],
+                        },
+                    ]
+                elif "packets_total" in query and "errors_total" in query:
+                    results = [
+                        {"metric": {}, "value": [1786900000, "0.0004"]},
+                    ]
+                elif "packets_total" in query and "dropped_total" in query:
+                    results = [
+                        {"metric": {}, "value": [1786900000, "0.0008"]},
+                    ]
+                elif "port_receive_errors_total" in query:
+                    results = [
+                        {"metric": {}, "value": [1786900000, "4325"]},
+                    ]
+                elif "port_receive_dropped_total" in query:
+                    results = [
+                        {"metric": {}, "value": [1786900000, "6235"]},
+                    ]
+                response_payload = {
+                    "status": "success",
+                    "data": {"resultType": "vector", "result": results},
+                }
+            return io.BytesIO(json.dumps(response_payload).encode("utf-8"))
+
+        client = dashboard_server.UnifiPrometheusClient(
+            "http://192.168.40.214:9090",
+            opener=opener,
+            controller_client=SimpleNamespace(
+                devices=lambda: [
+                    {
+                        "mac": "68:d7:9a:68:24:49",
+                        "name": "Main switch",
+                        "model": "US624P",
+                        "controller_state": "OFFLINE",
+                        "reported_online": False,
+                        "inventory_source": "unifi_controller",
+                    },
+                ],
+            ),
+        )
+        summary = client.summary()
+
+        self.assertEqual(summary["status"], "WARNING")
+        self.assertEqual(summary["summary"]["clients"], 20)
+        self.assertEqual(summary["summary"]["disconnected"], 3)
+        self.assertEqual(summary["summary"]["latency_ms"], 2.0)
+        self.assertEqual(summary["health"]["devices"]["status"], "WARNING")
+        self.assertEqual(summary["health"]["devices"]["unexpected_offline"], 1)
+        self.assertEqual(summary["health"]["switching"]["status"], "WATCH")
+        self.assertEqual(
+            summary["health"]["switching"]["port_error_ratio_pct"],
+            0.04,
+        )
+        self.assertEqual(
+            summary["health"]["switching"]["error_hotspots"][0]["port"],
+            "8",
+        )
+        switch_finding = next(
+            finding
+            for finding in summary["findings"]
+            if finding["title"] == "Switch-port errors"
+        )
+        self.assertIn("Main switch port 8", switch_finding["detail"])
+        self.assertEqual(len(summary["trends"]["clients"]), 2)
+        self.assertEqual(summary["trends"]["clients"][-1][1], 20)
+        self.assertEqual(len(summary["devices"]), 1)
+        self.assertEqual(summary["devices"][0]["name"], "Main switch")
+        self.assertEqual(summary["devices"][0]["temperature_c"], 42)
+        self.assertFalse(summary["devices"][0]["reported_online"])
+        self.assertIn("Main switch", summary["findings"][0]["detail"])
+        query = parse_qs(urlsplit(requested_urls[0]).query)["query"][0]
+        self.assertIn('job="unpoller"', query)
+        self.assertIn("unpoller_device_info", query)
+        self.assertNotIn("unpoller_client_mac", query)
+
+        expected_client = dashboard_server.UnifiPrometheusClient(
+            "http://192.168.40.214:9090",
+            opener=opener,
+            expected_offline_devices=["Main switch"],
+            controller_client=SimpleNamespace(
+                devices=lambda: [
+                    {
+                        "mac": "68:d7:9a:68:24:49",
+                        "name": "Main switch",
+                        "model": "US624P",
+                        "controller_state": "OFFLINE",
+                        "reported_online": False,
+                        "inventory_source": "unifi_controller",
+                    },
+                ],
+            ),
+        )
+        expected_summary = expected_client.summary()
+        self.assertEqual(expected_summary["status"], "WATCH")
+        self.assertEqual(expected_summary["health"]["devices"]["status"], "OK")
+        self.assertEqual(expected_summary["summary"]["expected_offline"], 1)
+        self.assertEqual(expected_summary["summary"]["unexpected_offline"], 0)
+
+    def test_unifi_integration_url_is_optional_topology_configuration(self) -> None:
+        topology_dir = self.ansible_dir / "dashboard" / "assets"
+        topology_dir.mkdir(parents=True)
+        (topology_dir / "dashboard-topology.json").write_text(
+            json.dumps(
+                {
+                    "integrations": {
+                        "unifi": {
+                            "enabled": True,
+                            "prometheus_url": "http://192.168.40.214:9090",
+                            "controller_url": "https://192.168.2.12",
+                            "controller_verify_tls": False,
+                            "expected_offline_devices": ["ModemPlug"],
+                        },
+                    },
+                },
+            ),
+            encoding="utf-8",
+        )
+
+        self.assertEqual(
+            dashboard_server.configured_prometheus_url(self.ansible_dir),
+            "http://192.168.40.214:9090",
+        )
+        self.assertEqual(
+            dashboard_server.configured_unifi_settings(self.ansible_dir)[
+                "expected_offline_devices"
+            ],
+            ["ModemPlug"],
+        )
+        settings = dashboard_server.configured_unifi_settings(self.ansible_dir)
+        self.assertEqual(settings["controller_url"], "https://192.168.2.12")
+        self.assertFalse(settings["controller_verify_tls"])
+
+    def test_unifi_controller_reads_adopted_devices_from_local_api(self) -> None:
+        requested: list[object] = []
+
+        def opener(request: object, **kwargs: object) -> io.BytesIO:
+            requested.append((request, kwargs))
+            path = urlsplit(request.full_url).path
+            if path.endswith("/v1/sites"):
+                payload = {
+                    "offset": 0,
+                    "limit": 200,
+                    "totalCount": 1,
+                    "data": [{"id": "site-id", "name": "Default"}],
+                }
+            else:
+                payload = {
+                    "offset": 0,
+                    "limit": 200,
+                    "totalCount": 1,
+                    "data": [
+                        {
+                            "id": "device-id",
+                            "ipAddress": "192.168.12.243",
+                            "macAddress": "68:d7:9a:68:24:49",
+                            "model": "US624P",
+                            "name": "Main switch",
+                            "firmwareVersion": "7.4.1",
+                            "state": "OFFLINE",
+                        },
+                    ],
+                }
+            return io.BytesIO(json.dumps(payload).encode("utf-8"))
+
+        devices = dashboard_server.UnifiControllerClient(
+            "https://192.168.2.12",
+            "secret-key",
+            verify_tls=False,
+            opener=opener,
+        ).devices()
+
+        self.assertEqual(len(devices), 1)
+        self.assertEqual(devices[0]["name"], "Main switch")
+        self.assertEqual(devices[0]["ip"], "192.168.12.243")
+        self.assertEqual(devices[0]["controller_state"], "OFFLINE")
+        self.assertFalse(devices[0]["reported_online"])
+        self.assertTrue(
+            requested[1][0].full_url.endswith(
+                "/proxy/network/integration/v1/sites/site-id/devices?offset=0&limit=200",
+            ),
+        )
+        self.assertEqual(requested[0][0].get_header("X-api-key"), "secret-key")
+        self.assertIn("context", requested[0][1])
+
+    def test_unifi_controller_roster_excludes_forgotten_history(self) -> None:
+        sample_timestamp = 1786900000
+        current_payload = {
+            "status": "success",
+            "data": {
+                "result": [
+                    {
+                        "metric": {
+                            "__name__": "unpoller_controller_up",
+                            "job": "unpoller",
+                        },
+                        "value": [sample_timestamp, "1"],
+                    },
+                    {
+                        "metric": {
+                            "__name__": "unpoller_device_info",
+                            "job": "unpoller",
+                            "mac": "00:00:00:00:00:01",
+                            "name": "Online switch",
+                            "model": "USMINI",
+                            "type": "usw",
+                        },
+                        "value": [sample_timestamp, "1"],
+                    },
+                    {
+                        "metric": {
+                            "__name__": "unpoller_device_uptime_seconds",
+                            "job": "unpoller",
+                            "name": "Online switch",
+                        },
+                        "value": [sample_timestamp, "3600"],
+                    },
+                ],
+            },
+        }
+        history_payload = {
+            "status": "success",
+            "data": {
+                "resultType": "matrix",
+                "result": [
+                    {
+                        "metric": {
+                            "job": "unpoller",
+                            "mac": "00:00:00:00:00:01",
+                            "name": "Online switch",
+                            "model": "USMINI",
+                            "type": "usw",
+                        },
+                        "values": [[sample_timestamp, "1"]],
+                    },
+                    {
+                        "metric": {
+                            "job": "unpoller",
+                            "mac": "00:00:00:00:00:02",
+                            "name": "Missing switch",
+                            "model": "USMINI",
+                            "type": "usw",
+                        },
+                        "values": [[sample_timestamp - 3600, "1"]],
+                    },
+                ],
+            },
+        }
+        empty_payload = {
+            "status": "success",
+            "data": {"result": []},
+        }
+
+        def opener(request: object, **_kwargs: object) -> io.BytesIO:
+            parsed = urlsplit(request.full_url)
+            query = parse_qs(parsed.query).get("query", [""])[0]
+            response_payload = empty_payload
+            if "__name__=~" in query:
+                response_payload = current_payload
+            elif parsed.path.endswith("/query_range"):
+                response_payload = (
+                    history_payload
+                    if "unpoller_device_info" in query
+                    else {
+                        "status": "success",
+                        "data": {"resultType": "matrix", "result": []},
+                    }
+                )
+            return io.BytesIO(json.dumps(response_payload).encode("utf-8"))
+
+        summary = dashboard_server.UnifiPrometheusClient(
+            "http://192.168.40.214:9090",
+            opener=opener,
+            controller_client=SimpleNamespace(
+                devices=lambda: [
+                    {
+                        "mac": "00:00:00:00:00:01",
+                        "name": "Online switch",
+                        "model": "USMINI",
+                        "controller_state": "ONLINE",
+                        "reported_online": True,
+                        "inventory_source": "unifi_controller",
+                    },
+                ],
+            ),
+        ).summary()
+
+        self.assertEqual(summary["summary"]["total_devices"], 1)
+        self.assertEqual(summary["summary"]["online_devices"], 1)
+        self.assertEqual(summary["summary"]["unexpected_offline"], 0)
+        self.assertEqual(summary["health"]["devices"]["status"], "OK")
+        self.assertTrue(summary["summary"]["inventory_authoritative"])
+        self.assertNotIn(
+            "Missing switch",
+            [device["name"] for device in summary["devices"]],
+        )
 
     def test_only_manifest_hosts_are_allowed(self) -> None:
         controller = dashboard_server.HealthCheckController(

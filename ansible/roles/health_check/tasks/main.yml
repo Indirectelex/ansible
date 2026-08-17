@@ -1,10 +1,22 @@
 ---
+# TEACHER NOTE — CHAPTER 5: Linux health pipeline
+# Purpose: orchestrate one host from discovery through collection, policy,
+# normalized modules, overall state, browser schema, and controller publication.
+# Inputs are live command results plus defaults/inventory; outputs are the final
+# health_check_report JSON object and its Markdown rendering.
+# CHANGE INSTRUCTIONS: preserve stage order because later stages consume facts
+# created earlier; update schema, renderer, tests, and notes for contract changes.
+
+# CHAPTER 5.1 — Discover capability and calculate effective policy
 - name: Discover host capabilities
   ansible.builtin.include_tasks: feature_discovery.yml
 
 - name: Normalize host features and monitoring modules
   ansible.builtin.include_tasks: feature_policy.yml
 
+# CHAPTER 5.2 — Collect universal read-only Linux evidence
+# These commands establish the baseline resource/service view shared by every
+# managed Linux host before optional technology modules run.
 - name: Collect root filesystem usage
   ansible.builtin.command:
     argv:
@@ -77,9 +89,46 @@
   changed_when: false
   failed_when: false
 
+# CHAPTER 5.3 — Build independent patch posture
+# Patch posture is maintenance state, not the same thing as physical host health.
 - name: Build read-only patch intelligence
   ansible.builtin.include_tasks: patch_intelligence.yml
 
+# CHAPTER 5.4 — Load the previous trusted observation
+# Historical evidence allows SMART and patch counters to distinguish stable
+# WATCH conditions from active deterioration.
+- name: Check for the previous host report
+  ansible.builtin.stat:
+    path: "{{ health_check_report_dir }}/{{ inventory_hostname }}.json"
+  delegate_to: localhost
+  become: false
+  register: health_check_previous_report_file
+  changed_when: false
+
+- name: Read the previous host report
+  ansible.builtin.slurp:
+    src: "{{ health_check_report_dir }}/{{ inventory_hostname }}.json"
+  delegate_to: localhost
+  become: false
+  register: health_check_previous_report_content
+  when: health_check_previous_report_file.stat.exists | bool
+  changed_when: false
+
+- name: Normalize the previous host report
+  ansible.builtin.set_fact:
+    health_check_previous_report: >-
+      {{
+        (
+          health_check_previous_report_content.content
+          | default('')
+          | b64decode
+        )
+        | safe_json_object
+      }}
+  changed_when: false
+
+# CHAPTER 5.5 — Run optional technology modules
+# Every enabled module appends the same check/status/summary/details contract.
 - name: Initialize standardized module results
   ansible.builtin.set_fact:
     health_check_module_results: []
@@ -91,12 +140,19 @@
 - name: Run Proxmox monitoring module
   ansible.builtin.include_tasks: modules/proxmox.yml
 
+- name: Run Proxmox Backup Server monitoring module
+  ansible.builtin.include_tasks: modules/pbs.yml
+
+- name: Collect Proxmox guest storage identities
+  ansible.builtin.include_tasks: modules/proxmox_guest_storage.yml
+
 - name: Run ZFS monitoring module
   ansible.builtin.include_tasks: modules/zfs.yml
 
 - name: Run SMART monitoring module
   ansible.builtin.include_tasks: modules/smart.yml
 
+# CHAPTER 5.6 — Normalize baseline values and choose initial health
 - name: Calculate health metrics
   ansible.builtin.set_fact:
     health_check_disk_percent: >-
@@ -163,14 +219,31 @@
           or health_check_failed_service_count | int > 0
           or (
             health_check_module_results
-            | selectattr('status', 'in', ['warning', 'unknown'])
+            | selectattr('status', 'equalto', 'warning')
             | list
             | length > 0
           )
         )
+        else 'UNKNOWN'
+        if (
+          health_check_module_results
+          | selectattr('status', 'equalto', 'unknown')
+          | list
+          | length > 0
+        )
+        else 'WATCH'
+        if (
+          health_check_module_results
+          | selectattr('status', 'equalto', 'watch')
+          | list
+          | length > 0
+        )
         else 'OK'
       }}
 
+# CHAPTER 5.7 — Assemble the internal report model
+# The following enrichment task files add thresholds/policies before the final
+# browser-facing schema adapter runs.
 - name: Assemble structured health report
   ansible.builtin.set_fact:
     health_check_report:
@@ -253,7 +326,10 @@
         {{ health_check_proxmox_version.stdout | default('Not applicable') }}
       proxmox_storage: >-
         {{ health_check_proxmox_storage.stdout | default('Not applicable') }}
+      storage_topology: >-
+        {{ health_check_storage_topology_result | default({}) }}
 
+# CHAPTER 5.8 — Enrich policy, adapt schema, and publish atomically
 - name: Evaluate swap and load thresholds
   ansible.builtin.include_tasks: resource_thresholds.yml
 

@@ -1,0 +1,10 @@
+---
+# TEACHER NOTE — CHAPTER 8: Host-specific storage policy
+# Purpose: document the small amount of intent that cannot be discovered live.
+# Current design discovers disk consumers and ZFS membership through Proxmox
+# and QEMU Guest Agent; this file must not become a hand-maintained disk map.
+# CHANGE INSTRUCTIONS: prefer live discovery; if an override is unavoidable,
+# explain why here and add a storage-health fixture proving its behaviour.
+
+# Disk consumers and ZFS pool membership are discovered live from Proxmox
+# through the QEMU Guest Agent. No per-drive inventory mapping is required.

@@ -1,4 +1,10 @@
 ---
+# TEACHER NOTE — CHAPTER 5.5: Proxmox module
+# Purpose: collect platform version and storage status, flag inactive storage,
+# and append one standardized module result.
+# CHANGE INSTRUCTIONS: command parsing must tolerate Proxmox output changes;
+# preserve unknown-on-failure and test inactive/healthy storage examples.
+
 - name: Collect Proxmox version
   ansible.builtin.command:
     argv:

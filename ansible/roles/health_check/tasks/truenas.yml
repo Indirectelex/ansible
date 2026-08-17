@@ -1,0 +1,376 @@
+---
+# TEACHER NOTE — CHAPTER 5B: TrueNAS appliance pipeline
+# Purpose: produce the same dashboard contract for TrueNAS while respecting its
+# appliance command set and non-become SSH account. ZFS is always applicable.
+# Outputs: TrueNAS JSON/Markdown reports written on the controller.
+# CHANGE INSTRUCTIONS: keep schema/status parity with Linux main.yml; validate
+# against TrueNAS command output and run dashboard contract tests.
+
+# CHAPTER 5B.1 — Establish fixed appliance policy and collect evidence
+- name: Initialize TrueNAS monitoring policy
+  ansible.builtin.set_fact:
+    health_check_effective_features: "{{ host_features | default({}) }}"
+    health_check_effective_modules:
+      zfs: true
+    health_check_module_results: []
+  changed_when: false
+
+- name: Collect TrueNAS root filesystem usage
+  ansible.builtin.command:
+    argv:
+      - df
+      - -P
+      - /
+  register: health_check_truenas_disk
+  changed_when: false
+
+- name: Collect TrueNAS root inode usage
+  ansible.builtin.command:
+    argv:
+      - df
+      - -Pi
+      - /
+  register: health_check_truenas_inodes
+  changed_when: false
+
+- name: Collect TrueNAS load average
+  ansible.builtin.command:
+    argv:
+      - cat
+      - /proc/loadavg
+  register: health_check_truenas_load
+  changed_when: false
+
+- name: Collect failed TrueNAS services
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - --failed
+      - --no-legend
+      - --plain
+  register: health_check_truenas_failed_services
+  changed_when: false
+  failed_when: false
+
+- name: Collect TrueNAS version
+  ansible.builtin.command:
+    argv:
+      - cat
+      - /etc/version
+  register: health_check_truenas_version
+  changed_when: false
+  failed_when: false
+
+- name: Run TrueNAS ZFS monitoring module
+  ansible.builtin.include_tasks: modules/zfs.yml
+
+- name: Calculate TrueNAS resource metrics
+  ansible.builtin.set_fact:
+    health_check_truenas_disk_percent: >-
+      {{
+        health_check_truenas_disk.stdout_lines[-1].split()[4]
+        | replace('%', '')
+        | int
+      }}
+    health_check_truenas_inode_percent: >-
+      {{
+        health_check_truenas_inodes.stdout_lines[-1].split()[4]
+        | replace('%', '')
+        | int
+      }}
+    health_check_truenas_memory_percent: >-
+      {{
+        (
+          ansible_facts.memory_mb.real.used
+          | float
+          / ansible_facts.memory_mb.real.total
+          | float
+          * 100
+        ) | round(1)
+      }}
+    health_check_truenas_load_per_cpu: >-
+      {{
+        (
+          health_check_truenas_load.stdout.split()[0]
+          | float
+          / (
+            ansible_facts.processor_vcpus
+            | default(1, true)
+            | int
+          )
+        ) | round(2)
+      }}
+    health_check_truenas_failed_service_count: >-
+      {{
+        health_check_truenas_failed_services.stdout_lines
+        | reject('equalto', '')
+        | list
+        | length
+      }}
+  changed_when: false
+
+# CHAPTER 5B.2 — Aggregate appliance resource and ZFS evidence
+- name: Determine TrueNAS overall health status
+  ansible.builtin.set_fact:
+    health_check_truenas_status: >-
+      {{
+        'CRITICAL'
+        if (
+          health_check_zfs_result.status == 'critical'
+          or health_check_truenas_disk_percent | int
+             >= health_check_disk_critical_percent
+          or health_check_truenas_inode_percent | int
+             >= health_check_inode_critical_percent
+        )
+        else 'UNKNOWN'
+        if health_check_zfs_result.status == 'unknown'
+        else 'WARNING'
+        if (
+          health_check_zfs_result.status == 'warning'
+          or health_check_truenas_disk_percent | int
+             >= health_check_disk_warning_percent
+          or health_check_truenas_inode_percent | int
+             >= health_check_inode_warning_percent
+          or health_check_truenas_load_per_cpu | float
+             >= health_check_load_warning_per_cpu
+          or health_check_truenas_failed_service_count | int > 0
+        )
+        else 'WATCH'
+        if health_check_zfs_result.status == 'watch'
+        else 'OK'
+      }}
+  changed_when: false
+
+- name: Build TrueNAS health reasons
+  ansible.builtin.set_fact:
+    health_check_truenas_reasons: >-
+      {{
+        (
+          []
+          if health_check_zfs_result.status == 'healthy'
+          else ['zfs: ' ~ health_check_zfs_result.summary]
+        )
+        + (
+          []
+          if health_check_truenas_disk_percent | int
+             < health_check_disk_warning_percent
+          else [
+            'Root disk '
+            ~ (health_check_truenas_disk_percent | string)
+            ~ '%'
+          ]
+        )
+        + (
+          []
+          if health_check_truenas_failed_service_count | int == 0
+          else [
+            (health_check_truenas_failed_service_count | string)
+            ~ ' failed service(s)'
+          ]
+        )
+      }}
+  changed_when: false
+
+# CHAPTER 5B.3 — Assemble the browser-compatible appliance contract
+- name: Assemble TrueNAS dashboard report
+  ansible.builtin.set_fact:
+    health_check_report:
+      schema_version: 3
+      report_type: host_health
+      generated_at: "{{ ansible_facts.date_time.iso8601 }}"
+      host: "{{ inventory_hostname }}"
+      status: "{{ health_check_truenas_status }}"
+      health_status: "{{ health_check_truenas_status }}"
+      health_status_reasons: "{{ health_check_truenas_reasons }}"
+      status_reasons: "{{ health_check_truenas_reasons }}"
+      operating_system: >-
+        TrueNAS SCALE
+        {{ health_check_truenas_version.stdout | default('') }}
+      kernel: "{{ ansible_facts.kernel }}"
+      uptime_days: >-
+        {{ (ansible_facts.uptime_seconds | int / 86400) | round(1) }}
+      detected_features:
+        truenas: true
+        zfs: true
+      declared_feature_overrides: "{{ host_features | default({}) }}"
+      features: "{{ health_check_effective_features }}"
+      monitoring_modules: "{{ health_check_effective_modules }}"
+      module_results: "{{ health_check_module_results }}"
+      maintenance_applicable: false
+      patch_posture_status: CURRENT
+      patch_status_reasons:
+        - TrueNAS appliance updates are outside APT monitoring
+      patch_policy: monitor_only
+      patch_counts_trusted: true
+      package_metadata_status: FRESH
+      package_metadata_age_hours: null
+      updates_available: 0
+      security_updates_available: 0
+      regular_updates_available: 0
+      review_required: 0
+      restart_sensitive: 0
+      security_packages:
+        review_required: []
+        restart_sensitive: []
+        standard_security: []
+      reboot_required: false
+      root_disk_percent: "{{ health_check_truenas_disk_percent }}"
+      root_inode_percent: "{{ health_check_truenas_inode_percent }}"
+      memory_percent: "{{ health_check_truenas_memory_percent }}"
+      load_per_cpu: "{{ health_check_truenas_load_per_cpu }}"
+      failed_service_count: >-
+        {{ health_check_truenas_failed_service_count }}
+      failed_services: >-
+        {{ health_check_truenas_failed_services.stdout_lines }}
+      metrics:
+        - id: root_disk
+          label: Root disk
+          category: storage
+          value: "{{ health_check_truenas_disk_percent }}"
+          unit: "%"
+          display: gauge
+          order: 10
+          status: >-
+            {{
+              'CRITICAL'
+              if health_check_truenas_disk_percent | int
+                 >= health_check_disk_critical_percent
+              else 'WARNING'
+              if health_check_truenas_disk_percent | int
+                 >= health_check_disk_warning_percent
+              else 'OK'
+            }}
+        - id: root_inodes
+          label: Root inodes
+          category: storage
+          value: "{{ health_check_truenas_inode_percent }}"
+          unit: "%"
+          display: gauge
+          order: 20
+          status: >-
+            {{
+              'CRITICAL'
+              if health_check_truenas_inode_percent | int
+                 >= health_check_inode_critical_percent
+              else 'WARNING'
+              if health_check_truenas_inode_percent | int
+                 >= health_check_inode_warning_percent
+              else 'OK'
+            }}
+        - id: memory
+          label: Memory
+          category: resources
+          value: "{{ health_check_truenas_memory_percent }}"
+          unit: "%"
+          display: gauge
+          order: 30
+          status: OK
+        - id: load_per_cpu
+          label: Load per CPU
+          category: resources
+          value: "{{ health_check_truenas_load_per_cpu }}"
+          display: number
+          order: 50
+          status: >-
+            {{
+              'CRITICAL'
+              if health_check_truenas_load_per_cpu | float
+                 >= health_check_load_critical_per_cpu
+              else 'WARNING'
+              if health_check_truenas_load_per_cpu | float
+                 >= health_check_load_warning_per_cpu
+              else 'OK'
+            }}
+        - id: failed_services
+          label: Failed services
+          category: services
+          value: "{{ health_check_truenas_failed_service_count }}"
+          unit: services
+          display: number
+          order: 70
+          status: >-
+            {{
+              'WARNING'
+              if health_check_truenas_failed_service_count | int > 0
+              else 'OK'
+            }}
+      sections:
+        - id: monitoring_modules
+          label: Monitoring modules
+          category: health
+          display: module-results
+          order: 5
+          items: "{{ health_check_module_results }}"
+        - id: failed_services
+          label: Failed services
+          category: services
+          display: list
+          order: 10
+          items: "{{ health_check_truenas_failed_services.stdout_lines }}"
+        - id: system_information
+          label: TrueNAS system information
+          category: technical
+          display: preformatted
+          order: 100
+          content: >-
+            TrueNAS SCALE
+            {{ health_check_truenas_version.stdout | default('Unknown') }}
+            | kernel {{ ansible_facts.kernel }}
+  changed_when: false
+
+# CHAPTER 5B.4 — Publish both machine and human-readable reports
+- name: Ensure TrueNAS report directory exists on Hackwell
+  ansible.builtin.file:
+    path: "{{ health_check_report_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Write TrueNAS JSON report on Hackwell
+  ansible.builtin.copy:
+    content: "{{ health_check_report | to_nice_json }}\n"
+    dest: "{{ health_check_report_dir }}/{{ inventory_hostname }}.json"
+    mode: "0640"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Write TrueNAS Markdown report on Hackwell
+  ansible.builtin.copy:
+    content: |
+      # {{ inventory_hostname }} TrueNAS health report
+
+      Generated: {{ health_check_report.generated_at }}
+
+      Overall health: {{ health_check_report.health_status }}
+
+      ## ZFS
+
+      {{ health_check_zfs_result.summary }}
+
+      {% for pool in health_check_zfs_result.details.pools | default([]) %}
+      - {{ pool.name }}: {{ pool.health }}{% if pool.capacity_percent is defined %}, {{ pool.capacity_percent }}% used{% endif %}
+      {% endfor %}
+
+      ## Resources
+
+      - Root disk: {{ health_check_truenas_disk_percent }}%
+      - Root inodes: {{ health_check_truenas_inode_percent }}%
+      - Memory: {{ health_check_truenas_memory_percent }}%
+      - Load per CPU: {{ health_check_truenas_load_per_cpu }}
+      - Failed services: {{ health_check_truenas_failed_service_count }}
+    dest: "{{ health_check_report_dir }}/{{ inventory_hostname }}.md"
+    mode: "0640"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Display TrueNAS health summary
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: Health {{ health_check_truenas_status }}
+      | {{ health_check_zfs_result.summary }}
+      | Memory {{ health_check_truenas_memory_percent }}%
+      | Failed services {{ health_check_truenas_failed_service_count }}

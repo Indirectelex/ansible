@@ -1,4 +1,11 @@
 ---
+# TEACHER NOTE — CHAPTER 4: Capability-to-policy resolution
+# Purpose: merge safe defaults, discovered capability, explicit host_features,
+# and monitoring_modules overrides into one validated effective policy.
+# Explicit inventory intent wins; impossible enabled-module combinations fail.
+# CHANGE INSTRUCTIONS: add new keys through defaults, discovery, derivation,
+# validation, module inclusion, schema/tests, and documentation as one change.
+
 - name: Validate host feature configuration
   ansible.builtin.assert:
     that:
@@ -58,6 +65,7 @@
     health_check_feature_modules:
       docker: "{{ health_check_effective_features.docker | bool }}"
       proxmox: "{{ health_check_effective_features.proxmox | bool }}"
+      pbs: "{{ health_check_effective_features.pbs | bool }}"
       zfs: "{{ health_check_effective_features.zfs | bool }}"
       smart: "{{ health_check_effective_features.smart | bool }}"
   changed_when: false
@@ -81,6 +89,9 @@
       - >-
         not (health_check_effective_modules.proxmox | bool)
         or (health_check_effective_features.proxmox | bool)
+      - >-
+        not (health_check_effective_modules.pbs | bool)
+        or (health_check_effective_features.pbs | bool)
       - >-
         not (health_check_effective_modules.zfs | bool)
         or (health_check_effective_features.zfs | bool)

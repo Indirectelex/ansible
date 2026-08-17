@@ -1,4 +1,11 @@
-"""Safety-contract tests for the manual security update playbook."""
+"""Safety-contract tests for the manual security update playbook.
+
+TEACHER NOTE — CHAPTER 14
+These static contracts prevent fleet-wide execution, package removal, hidden
+scheduling, and automatic reboot from entering the maintenance workflow.
+CHANGE INSTRUCTIONS: mutation-policy changes require explicit approval, updated
+operator instructions, and stronger tests before weakening an assertion.
+"""
 
 from __future__ import annotations
 

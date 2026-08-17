@@ -1,4 +1,11 @@
 ---
+# TEACHER NOTE — CHAPTER 7: Operating-system automation evidence
+# Purpose: read unattended-upgrades/systemd/APT configuration and journal state
+# into deterministic key-value evidence without changing host automation.
+# Outputs feed patch posture to distinguish scheduled work from overdue failure.
+# CHANGE INSTRUCTIONS: shell probes must remain bounded/read-only; update parser
+# keys, filter tests, and posture reasons together.
+
 - name: Inspect existing operating-system update automation
   ansible.builtin.shell: |
     set -o pipefail

@@ -1,4 +1,12 @@
 ---
+# TEACHER NOTE — CHAPTER 14: Explicit security maintenance
+# Purpose: install only the freshly recalculated APT security set on one exact
+# dashboard-confirmed host. This is a mutation playbook, unlike health checks.
+# Safety: serial execution, fixed package allowlist, simulation, no removals,
+# dpkg audit, and no automatic reboot.
+# CHANGE INSTRUCTIONS: never weaken the one-host assertion or removal guard;
+# update server confirmation, safety tests, and teacher guide together.
+
 - name: Install explicitly detected APT security updates
   hosts: monitoring_enabled
   become: true

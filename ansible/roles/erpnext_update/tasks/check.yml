@@ -1,4 +1,11 @@
 ---
+# TEACHER NOTE — ERPNext CHAPTER 2: Release intelligence
+# Purpose: read the deployed Compose tag and compare it with stable official
+# ERPNext v16 releases. Drafts, prereleases, and other majors are excluded.
+# Outputs: current version, latest release, and update_available facts.
+# CHANGE INSTRUCTIONS: release parsing changes require fixtures for multiple
+# tags and must not turn the read-only check into a deployment action.
+
 - name: Check ERPNext production Compose file
   ansible.builtin.stat:
     path: "{{ erpnext_compose_file }}"

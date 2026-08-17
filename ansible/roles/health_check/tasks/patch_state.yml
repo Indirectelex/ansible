@@ -1,4 +1,11 @@
 ---
+# TEACHER NOTE — CHAPTER 7: Trusted controller-side history
+# Purpose: remember when each security package was first observed so pending age
+# survives host runs. Untrusted observations must not erase trusted history.
+# Storage: private .state/health_check JSON on the controller, never the browser.
+# CHANGE INSTRUCTIONS: preserve atomic/private state semantics and add transition
+# tests before changing merge or clearing rules.
+
 - name: Set controller observation time
   ansible.builtin.set_fact:
     health_check_observed_at: >-

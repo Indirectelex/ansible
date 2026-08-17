@@ -1,4 +1,13 @@
 ---
+# TEACHER NOTE — CHAPTER 5: Connectivity boundary
+# Purpose: turn an unreachable machine into a valid, visible report rather than
+# losing the host or failing the whole play. Facts are gathered only after the
+# connection succeeds.
+# Outputs: either an UNREACHABLE JSON/Markdown pair and end_host, or facts for
+# the main health role.
+# CHANGE INSTRUCTIONS: keep the fallback report compatible with the dashboard
+# schema and test both success and unreachable paths after editing.
+
 - name: Ensure report directory exists on Hackwell
   ansible.builtin.file:
     path: "{{ health_check_report_dir }}"

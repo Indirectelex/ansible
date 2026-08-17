@@ -1,4 +1,11 @@
 ---
+# TEACHER NOTE — CHAPTER 4: Capability observation
+# Purpose: test fixed local commands and record what the host can support.
+# Failed detection is evidence of absence, not a play failure.
+# Outputs: health_check_detected_features consumed by feature_policy.yml.
+# CHANGE INSTRUCTIONS: discovery must remain read-only; add a boolean default,
+# policy rule, module task, and tests when introducing a new capability.
+
 - name: Detect Docker command
   ansible.builtin.command:
     argv:
@@ -15,6 +22,11 @@
   register: health_check_detected_proxmox_command
   changed_when: false
   failed_when: false
+
+- name: Detect Proxmox Backup Server manager
+  ansible.builtin.stat:
+    path: /usr/sbin/proxmox-backup-manager
+  register: health_check_detected_pbs_command
 
 - name: Detect ZFS command
   ansible.builtin.command:
@@ -41,6 +53,8 @@
         {{ (health_check_detected_docker_command.rc | default(127) | int) == 0 }}
       proxmox: >-
         {{ (health_check_detected_proxmox_command.rc | default(127) | int) == 0 }}
+      pbs: >-
+        {{ health_check_detected_pbs_command.stat.exists | default(false) | bool }}
       zfs: >-
         {{ (health_check_detected_zfs_command.rc | default(127) | int) == 0 }}
       smart: >-

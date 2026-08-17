@@ -1,0 +1,25 @@
+# TEACHER NOTE — CHAPTER 15: Persistent dashboard runtime
+# Purpose: keep the complete dashboard available after logout and reboot.
+# The custom server is mandatory because it provides APIs that a static server
+# cannot provide. reports/ is the web root; dashboard/ remains source code.
+#
+# CHANGE INSTRUCTIONS:
+# - Keep the bind address on loopback unless the security model is redesigned.
+# - If paths or arguments change, update docs/RUNTIME-OPERATIONS.md and tests.
+# - After installation, daemon-reload, restart, and test manifest/action/UniFi.
+
+[Unit]
+Description=Hackwell Monitoring Dashboard
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/infrastructure/ansible
+# Optional secret file; create it as mode 0600 before uncommenting.
+# EnvironmentFile=%h/.config/hackwell-dashboard/environment
+ExecStart=/usr/bin/python3 %h/infrastructure/ansible/dashboard/server.py --bind 127.0.0.1 --port 8088 --ansible-dir %h/infrastructure/ansible --reports-dir %h/infrastructure/ansible/reports
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

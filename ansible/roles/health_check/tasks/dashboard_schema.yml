@@ -1,4 +1,12 @@
 ---
+# TEACHER NOTE — CHAPTER 9: Browser contract adapter
+# Purpose: convert the internal health report into stable ordered metrics,
+# sections, status reasons, and schema metadata consumed by dashboard.js.
+# This is the boundary between monitoring logic and presentation logic.
+# CHANGE INSTRUCTIONS: any field/display/schema change requires matching JS,
+# Markdown, fixtures, layout tests, version decision, and updated instructions.
+
+# CHAPTER 9.1 — Explain non-OK health with operator-readable reasons
 - name: Initialize health status reasons
   ansible.builtin.set_fact:
     health_check_status_reasons: []
@@ -141,6 +149,7 @@
   when: item.status != 'healthy'
   changed_when: false
 
+# CHAPTER 9.2 — Define compact, ordered metrics and their display contracts
 - name: Build dashboard metric definitions
   ansible.builtin.set_fact:
     health_check_dashboard_metrics:
@@ -436,6 +445,7 @@
           }}
   changed_when: false
 
+# CHAPTER 9.3 — Define detail sections and optional technology additions
 - name: Build base dashboard sections
   ansible.builtin.set_fact:
     health_check_dashboard_sections:
@@ -514,7 +524,7 @@
             'id': 'monitoring_modules',
             'label': 'Monitoring modules',
             'category': 'health',
-            'display': 'table',
+            'display': 'module-results',
             'order': 5,
             'items': health_check_report.module_results
           }
@@ -645,6 +655,7 @@
   when: health_check_report.proxmox_applicable | default(false) | bool
   changed_when: false
 
+# CHAPTER 9.4 — Publish the versioned browser-facing contract
 - name: Add dashboard schema to health report
   ansible.builtin.set_fact:
     health_check_report: >-
@@ -652,7 +663,7 @@
         health_check_report
         | combine(
             {
-              'schema_version': 3,
+              'schema_version': 5,
               'report_type': 'host_health',
               'health_status': health_check_report.status,
               'health_status_reasons': health_check_status_reasons,

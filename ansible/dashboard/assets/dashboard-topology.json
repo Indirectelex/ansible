@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "_teacher_notes": {
+    "chapter": "Chapters 3 and 12: presentation topology and optional integrations",
+    "purpose": "Add parent/guest display relationships and non-secret integration endpoints without changing Ansible group membership.",
+    "inputs": "Stable manifest host IDs, local Prometheus URL, optional local UniFi controller URL, and deliberate offline-device exceptions.",
+    "outputs": "Browser tree placement plus server-side UniFi configuration. Unknown top-level keys are ignored by current consumers.",
+    "change_instructions": [
+      "Never put the UniFi API key or another secret in this browser-served file.",
+      "A node key must match the exact host ID written to reports/manifest.json.",
+      "Topology changes affect display only; inventory controls collection and action eligibility.",
+      "After editing, validate JSON, run server/layout tests, publish the dashboard, and test the UniFi endpoint."
+    ]
+  },
+  "datacenter_label": "Datacenter",
+  "integrations": {
+    "unifi": {
+      "enabled": true,
+      "prometheus_url": "http://192.168.40.214:9090",
+      "controller_url": "https://192.168.2.12",
+      "controller_verify_tls": false,
+      "expected_offline_devices": []
+    }
+  },
+  "nodes": {
+    "docker-ct": {
+      "parent": "zebulon",
+      "guest_id": 555,
+      "kind": "lxc"
+    },
+    "scale": {
+      "parent": "nimbus",
+      "guest_id": 1000,
+      "kind": "vm"
+    },
+    "pbs": {
+      "parent": "nimbus",
+      "guest_id": 999,
+      "kind": "pbs"
+    },
+    "ubuntu-server": {
+      "parent": "zebulon"
+    }
+  }
+}

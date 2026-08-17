@@ -1,4 +1,10 @@
 ---
+# TEACHER NOTE — ERPNext CHAPTER 1: Read-only release check
+# Purpose: invoke the controlled ERPNext role in check mode. It compares the
+# deployed Compose tag with stable upstream v16 releases but performs no update.
+# CHANGE INSTRUCTIONS: keep this wrapper read-only; change selection policy in
+# the role and validate the reported current/latest versions.
+
 - name: Check ERPNext release status
   hosts: docker-ct
   gather_facts: false

@@ -1,4 +1,10 @@
 ---
+# TEACHER NOTE — ERPNext CHAPTER 1: Workflow router
+# Purpose: validate the requested mode, always run release checks, and enter the
+# mutating update workflow only when policy says an update or preflight is due.
+# CHANGE INSTRUCTIONS: keep mode validation strict and keep the check path safe;
+# test both check/update branching whenever conditions change.
+
 - name: Validate ERPNext update mode
   ansible.builtin.assert:
     that:

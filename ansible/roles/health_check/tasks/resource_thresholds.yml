@@ -1,4 +1,10 @@
 ---
+# TEACHER NOTE — CHAPTER 6: Resource policy enrichment
+# Purpose: normalize swap and one-minute load per CPU, apply configured warning
+# and critical boundaries, and add the values to the report model.
+# CHANGE INSTRUCTIONS: keep policy in role defaults, preserve a worse existing
+# status, and test values just below/at both thresholds.
+
 - name: Calculate swap and load metrics
   ansible.builtin.set_fact:
     health_check_swap_percent: >-

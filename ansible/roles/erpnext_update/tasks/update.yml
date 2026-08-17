@@ -1,4 +1,10 @@
 ---
+# TEACHER NOTE — ERPNext CHAPTER 4: Gated production mutation
+# Purpose: apply an eligible release only after age, disk, backup, Compose, and
+# health gates pass, then migrate and verify both local and public service.
+# CHANGE INSTRUCTIONS: preserve gate order and rollback evidence; any new
+# mutation needs a preceding validation and a following observable health check.
+
 # ============================================================
 # RELEASE SAFETY GATE
 # ============================================================

@@ -1,4 +1,10 @@
 ---
+# TEACHER NOTE — CHAPTER 5.5: Docker module
+# Purpose: collect daemon and container visibility and append one standardized
+# module result. Command failure becomes unknown rather than aborting the host.
+# CHANGE INSTRUCTIONS: keep collection read-only and the standard result shape;
+# add detail rendering/tests before adding new Docker evidence.
+
 - name: Collect Docker information
   ansible.builtin.command:
     argv:

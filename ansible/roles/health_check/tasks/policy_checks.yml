@@ -1,4 +1,10 @@
 ---
+# TEACHER NOTE — CHAPTER 6: Non-resource policy checks
+# Purpose: apply time-synchronization and failed-service policy after baseline
+# health aggregation, then publish effective and ignored evidence separately.
+# CHANGE INSTRUCTIONS: do not hide ignored evidence; update reasons, schema,
+# Markdown, and policy tests when introducing a new compliance rule.
+
 - name: Determine time synchronization compliance
   ansible.builtin.set_fact:
     health_check_time_sync_problem: >-

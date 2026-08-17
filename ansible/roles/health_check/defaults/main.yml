@@ -1,4 +1,11 @@
 ---
+# TEACHER NOTE — CHAPTERS 4, 6, AND 7: Monitoring policy defaults
+# Purpose: centralize thresholds, feature defaults, module defaults, service
+# exceptions, patch freshness, and package-impact classification.
+# Inputs: optional inventory overrides. Outputs: policy consumed by role tasks.
+# CHANGE INSTRUCTIONS: thresholds are operational policy, not UI styling;
+# explain intent, test exact boundary values, and keep WATCH/WARNING distinct.
+
 health_check_disk_warning_percent: 80
 health_check_disk_critical_percent: 90
 
@@ -21,17 +28,23 @@ health_check_state_dir: "{{ playbook_dir }}/../.state/health_check"
 # health_check_detected_features later; inventory host_features always wins.
 health_check_feature_defaults:
   proxmox: false
+  pbs: false
   docker: false
   zfs: false
   smart: false
 
 health_check_detected_features: {}
 
+# Read-only storage observation policy. Storage topology is discovered live
+# through Proxmox and the QEMU Guest Agent rather than inventory declarations.
+health_check_storage_kernel_since: "-24h"
+
 # Optional technology modules are enabled from effective host features.
 # Inventory monitoring_modules may explicitly disable an available module.
 health_check_monitoring_module_defaults:
   docker: false
   proxmox: false
+  pbs: false
   zfs: false
   smart: false
 

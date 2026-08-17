@@ -1,6 +1,17 @@
 ---
+# TEACHER NOTE — CHAPTERS 5 AND 10: Collect, then publish
+# Purpose: this is the end-to-end monitoring entry point. It runs the Linux
+# role, runs the TrueNAS collector, and finally publishes one coherent web root.
+# Inputs: inventory groups, role defaults/overrides, live host evidence.
+# Outputs: reports/*.json, reports/*.md, manifest, topology, and UI assets.
+# CHANGE INSTRUCTIONS: preserve the three-play order; producer/schema changes
+# require consumer tests, a syntax check, and a full publication test.
+
+# CHAPTER 5A — Standard Linux hosts
+# The connectivity preflight writes an UNREACHABLE report instead of aborting
+# the entire fleet. Successful hosts then enter roles/health_check/tasks/main.yml.
 - name: Check Linux system health
-  hosts: monitoring_enabled
+  hosts: managed_linux
   become: true
   gather_facts: false
 
@@ -14,6 +25,29 @@
   roles:
     - role: health_check
 
+# CHAPTER 5B — TrueNAS appliance hosts
+# TrueNAS is intentionally separate because its command surface and privilege
+# model differ from general Debian/Ubuntu hosts.
+- name: Check TrueNAS storage health
+  hosts: truenas_hosts
+  become: false
+  gather_facts: true
+
+  environment:
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+  vars:
+    health_check_report_dir: "{{ playbook_dir }}/../reports"
+
+  tasks:
+    - name: Run TrueNAS-specific health collector
+      ansible.builtin.include_role:
+        name: health_check
+        tasks_from: truenas
+
+# CHAPTER 10 — Publication contract
+# Source UI files are copied into reports/ so interface, manifest, host reports,
+# and storage topology share one relative web root.
 - name: Publish scalable monitoring dashboard
   hosts: localhost
   become: false
@@ -45,6 +79,42 @@
         dest: "{{ health_dashboard_report_dir }}/assets/"
         mode: "0640"
         directory_mode: "0750"
+      changed_when: false
+
+    - name: Initialize live storage topology publication
+      ansible.builtin.set_fact:
+        health_dashboard_storage_topologies: []
+      changed_when: false
+
+    - name: Add discovered Proxmox storage topologies
+      ansible.builtin.set_fact:
+        health_dashboard_storage_topologies: >-
+          {{
+            health_dashboard_storage_topologies
+            + [hostvars[item].health_check_storage_topology_result]
+          }}
+      loop: "{{ groups.get('managed_linux', []) | sort }}"
+      when:
+        - hostvars[item].health_check_storage_topology_result is defined
+        - >-
+          hostvars[item].health_check_storage_topology_result.guests
+          | default([])
+          | length > 0
+      changed_when: false
+
+    - name: Write live storage topology
+      ansible.builtin.copy:
+        content: >-
+          {{
+            {
+              'schema_version': 1,
+              'generated_at': lookup('pipe', 'date --iso-8601=seconds'),
+              'hosts': health_dashboard_storage_topologies
+            }
+            | to_nice_json
+          }}
+        dest: "{{ health_dashboard_report_dir }}/storage-topology.json"
+        mode: "0640"
       changed_when: false
 
     - name: Initialize monitored host manifest

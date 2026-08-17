@@ -1,4 +1,12 @@
 ---
+# TEACHER NOTE — CHAPTER 7: Patch evidence pipeline
+# Purpose: determine APT metadata freshness, classify simulated upgrade lines,
+# load automation evidence, preserve pending history, and derive patch posture.
+# This pipeline observes cached metadata; it does not install packages.
+# CHANGE INSTRUCTIONS: preserve trusted/untrusted separation and reason ordering;
+# update Python filter fixtures and posture tests for classification changes.
+
+# CHAPTER 7.1 — Establish whether cached APT evidence is fresh enough to trust
 - name: Check APT update success timestamp
   ansible.builtin.stat:
     path: /var/lib/apt/periodic/update-success-stamp
@@ -144,6 +152,7 @@
       }}
   changed_when: false
 
+# CHAPTER 7.2 — Parse and classify the simulated candidate set
 - name: Classify cached APT upgrade candidates
   ansible.builtin.set_fact:
     health_check_patch_intelligence: >-
@@ -196,6 +205,7 @@
       }}
   changed_when: false
 
+# CHAPTER 7.3 — Merge automation and historical timing evidence
 - name: Inspect existing operating-system patch automation
   ansible.builtin.include_tasks: patch_automation.yml
 
@@ -233,6 +243,7 @@
       }}
   changed_when: false
 
+# CHAPTER 7.4 — Derive one posture and an ordered explanation list
 - name: Determine patch-posture status
   ansible.builtin.set_fact:
     health_check_patch_posture_status: >-

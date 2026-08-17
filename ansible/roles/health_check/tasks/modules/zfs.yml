@@ -1,4 +1,10 @@
 ---
+# TEACHER NOTE — CHAPTER 8: ZFS module
+# Purpose: collect pool topology/state and capacity separately, normalize both
+# into one standard module result, and keep parser complexity out of YAML.
+# CHANGE INSTRUCTIONS: preserve -pP/-Hp stable output assumptions and add parser
+# fixtures for any command-field change or new pool state.
+
 - name: Collect ZFS pool status
   ansible.builtin.command:
     argv:
