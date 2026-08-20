@@ -107,8 +107,10 @@ To add a host safely:
 
 To add a service, declare its stable name, hostname, exposure, and edge in the
 registry. Set `runtime_host` only when the runtime placement has been confirmed.
-Leaving it `null` is deliberate: the control plane should represent an unknown
-relationship explicitly rather than invent one.
+Leaving it `null` is deliberate when the placement is unknown: the control plane
+should represent an unknown relationship explicitly rather than invent one. The
+current public-service mappings are Website and Portal on `ubuntu-server`, and
+ERPNext on `docker-ct`.
 
 ## Chapter 4 — Capability discovery versus policy
 

@@ -62,7 +62,9 @@ class InfrastructureRegistryTests(unittest.TestCase):
         for service in registry["services"].values():
             self.assertEqual(service["edge"], "cloudflare")
             self.assertEqual(service["exposure"], "public")
-            self.assertIsNone(service["runtime_host"])
+        self.assertEqual(registry["services"]["website"]["runtime_host"], "ubuntu-server")
+        self.assertEqual(registry["services"]["portal"]["runtime_host"], "ubuntu-server")
+        self.assertEqual(registry["services"]["erpnext"]["runtime_host"], "docker-ct")
 
     def test_server_validates_registry_and_reports_mapping_gaps(self) -> None:
         registry = self.registry()
@@ -71,8 +73,8 @@ class InfrastructureRegistryTests(unittest.TestCase):
         self.assertTrue(normalized["available"])
         self.assertEqual(normalized["summary"]["hosts"], 6)
         self.assertEqual(normalized["summary"]["services"], 3)
-        self.assertEqual(normalized["summary"]["mapped_services"], 0)
-        self.assertEqual(normalized["summary"]["unmapped_services"], 3)
+        self.assertEqual(normalized["summary"]["mapped_services"], 3)
+        self.assertEqual(normalized["summary"]["unmapped_services"], 0)
         self.assertEqual(normalized["summary"]["edges"], 1)
 
     def test_server_rejects_broken_registry_relationships(self) -> None:

@@ -60,18 +60,18 @@ infrastructure_registry:
       hostname: echodata.ca
       exposure: public
       edge: cloudflare
-      runtime_host: null
+      runtime_host: ubuntu-server
 
     portal:
       name: Portal
       hostname: signal.echodata.ca
       exposure: public
       edge: cloudflare
-      runtime_host: null
+      runtime_host: ubuntu-server
 
     erpnext:
       name: ERPNext
       hostname: vault.echodata.ca
       exposure: public
       edge: cloudflare
-      runtime_host: null
+      runtime_host: docker-ct
