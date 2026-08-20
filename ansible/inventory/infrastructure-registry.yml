@@ -1,17 +1,19 @@
 ---
 # TEACHER NOTE — CHAPTER 3A: EchoDATA infrastructure registry
 # Purpose: declare stable infrastructure identity, parent/guest relationships,
-# public-service identity, and edge dependencies in one human-maintained source.
+# runtime workloads, public-service identity, and edge dependencies in one
+# human-maintained source.
 # Inputs: confirmed EchoDATA infrastructure facts. Connection credentials and
 # secrets remain outside this file; Ansible inventory still owns SSH mechanics.
 # Outputs: reports/infrastructure-registry.json and /api/registry for the local
 # control plane and dashboard.
 # CHANGE INSTRUCTIONS: change only confirmed facts; keep every monitored host in
-# this registry; reference existing host/edge IDs only; never store credentials
-# or API keys; run the registry/unit tests and publish playbook after edits.
+# this registry; reference existing host/workload/edge IDs only; never store
+# credentials or API keys; run the registry/unit tests and publish playbook after
+# edits.
 
 infrastructure_registry:
-  schema_version: 1
+  schema_version: 2
 
   control_plane:
     name: EchoDATA
@@ -54,24 +56,41 @@ infrastructure_registry:
       parent: zebulon
       management_address: 192.168.40.116
 
+  workloads:
+    website-app:
+      name: EchoDATA Website
+      kind: web_application
+      runtime_host: ubuntu-server
+
+    portal-app:
+      name: EchoDATA Portal
+      kind: web_application
+      runtime_host: ubuntu-server
+
+    erpnext-stack:
+      name: ERPNext
+      kind: docker_workload
+      runtime_host: docker-ct
+      engine: docker
+
   services:
     website:
       name: Website
       hostname: echodata.ca
       exposure: public
       edge: cloudflare
-      runtime_host: ubuntu-server
+      workload: website-app
 
     portal:
       name: Portal
       hostname: signal.echodata.ca
       exposure: public
       edge: cloudflare
-      runtime_host: ubuntu-server
+      workload: portal-app
 
     erpnext:
       name: ERPNext
       hostname: vault.echodata.ca
       exposure: public
       edge: cloudflare
-      runtime_host: docker-ct
+      workload: erpnext-stack

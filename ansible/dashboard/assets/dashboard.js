@@ -54,8 +54,9 @@ const state = {
     control_plane: {name: "EchoDATA", datacenter_label: "Datacenter"},
     edges: {},
     hosts: {},
+    workloads: {},
     services: {},
-    summary: {hosts: 0, services: 0, mapped_services: 0, unmapped_services: 0, edges: 0},
+    summary: {hosts: 0, workloads: 0, services: 0, mapped_services: 0, unmapped_services: 0, edges: 0},
   },
   unifi: null,
   collapsedHosts: new Set(),
@@ -1383,10 +1384,22 @@ function serviceNodeId(serviceId) {
   return `@service:${serviceId}`;
 }
 
+function registryWorkloads() {
+  return Object.entries(state.registry.workloads || {})
+    .map(([id, workload]) => ({id, ...workload}))
+    .sort((left, right) => String(left.name).localeCompare(String(right.name)));
+}
+
 function registryServices() {
   return Object.entries(state.registry.services || {})
     .map(([id, service]) => ({id, ...service}))
     .sort((left, right) => String(left.name).localeCompare(String(right.name)));
+}
+
+function workloadForService(service) {
+  const workloadId = service?.workload || null;
+  const workload = workloadId ? state.registry.workloads?.[workloadId] : null;
+  return workload ? {id: workloadId, ...workload} : null;
 }
 
 function selectedRegistryService() {
@@ -1445,10 +1458,19 @@ function renderServiceTreeRow(service) {
 }
 
 function renderServiceInspector(service) {
-  const runtimeHost = service.runtime_host || null;
+  const workload = workloadForService(service);
+  const runtimeHost = workload?.runtime_host || service.runtime_host || null;
+  const runtimeNode = runtimeHost ? state.registry.hosts?.[runtimeHost] : null;
+  const parentHost = runtimeNode?.parent || null;
   const edge = service.edge ? state.registry.edges?.[service.edge] : null;
+  const workloadText = workload?.name || service.workload || "Not mapped yet";
+  const workloadKind = workload?.kind || "Unknown";
+  const engineText = workload?.engine || "Not declared";
   const runtimeText = runtimeHost || "Not mapped yet";
   const edgeText = edge?.name || service.edge || "Direct / none declared";
+  const dependencyChain = [edgeText, service.hostname, workload?.name, runtimeHost, parentHost]
+    .filter(Boolean)
+    .join(" → ") || "Not mapped yet";
 
   inspector.innerHTML = `
     <header class="inspector-header">
@@ -1476,18 +1498,35 @@ function renderServiceInspector(service) {
         <dd>${escapeHtml(edgeText)}</dd>
       </div>
       <div>
+        <dt>Workload</dt>
+        <dd>${escapeHtml(workloadText)}</dd>
+      </div>
+      <div>
+        <dt>Workload kind</dt>
+        <dd>${escapeHtml(workloadKind)}</dd>
+      </div>
+      <div>
+        <dt>Runtime engine</dt>
+        <dd>${escapeHtml(engineText)}</dd>
+      </div>
+      <div>
         <dt>Runtime host</dt>
         <dd>${escapeHtml(runtimeText)}</dd>
+      </div>
+      <div>
+        <dt>Dependency chain</dt>
+        <dd>${escapeHtml(dependencyChain)}</dd>
       </div>
     </dl>
 
     ${
-      runtimeHost
-        ? `<p class="registry-note">Runtime relationship is declared by the EchoDATA infrastructure registry.</p>`
-        : `<p class="registry-note registry-note-unmapped">Runtime host has not been mapped yet. The registry records that gap instead of guessing where this service runs.</p>`
+      workload && runtimeHost
+        ? `<p class="registry-note">Service placement is resolved through the registered workload, so the host relationship is not duplicated in the service definition.</p>`
+        : `<p class="registry-note registry-note-unmapped">Workload placement has not been mapped yet. The registry records that gap instead of guessing where this service runs.</p>`
     }
   `;
 }
+
 
 function renderInfrastructureSection(
   sectionId,
@@ -2037,9 +2076,15 @@ function renderRegistryHostContext(report) {
 
   const parent = registered.parent || "Datacenter root";
   const address = registered.management_address || "Not declared";
-  const hostedServices = registryServices().filter(
-    (service) => service.runtime_host === report.host,
+  const hostedWorkloads = registryWorkloads().filter(
+    (workload) => workload.runtime_host === report.host,
   );
+  const hostedServices = registryServices().filter(
+    (service) => workloadForService(service)?.runtime_host === report.host,
+  );
+  const workloadText = hostedWorkloads.length
+    ? hostedWorkloads.map((workload) => workload.name).join(", ")
+    : "None mapped";
   const serviceText = hostedServices.length
     ? hostedServices.map((service) => service.name).join(", ")
     : "None mapped";
@@ -2049,6 +2094,7 @@ function renderRegistryHostContext(report) {
       <div><dt>Registry</dt><dd>Registered</dd></div>
       <div><dt>Management</dt><dd>${escapeHtml(address)}</dd></div>
       <div><dt>Parent</dt><dd>${escapeHtml(parent)}</dd></div>
+      <div><dt>Workloads</dt><dd>${escapeHtml(workloadText)}</dd></div>
       <div><dt>Services</dt><dd>${escapeHtml(serviceText)}</dd></div>
     </dl>
   `;
@@ -3589,8 +3635,9 @@ async function loadRegistry() {
       control_plane: registry.control_plane || {name: "EchoDATA", datacenter_label: "Datacenter"},
       edges: registry.edges && typeof registry.edges === "object" ? registry.edges : {},
       hosts: registry.hosts && typeof registry.hosts === "object" ? registry.hosts : {},
+      workloads: registry.workloads && typeof registry.workloads === "object" ? registry.workloads : {},
       services: registry.services && typeof registry.services === "object" ? registry.services : {},
-      summary: registry.summary || {hosts: 0, services: 0, mapped_services: 0, unmapped_services: 0, edges: 0},
+      summary: registry.summary || {hosts: 0, workloads: 0, services: 0, mapped_services: 0, unmapped_services: 0, edges: 0},
     };
   } catch (error) {
     return {...state.registry, available: false, error: error.message};
@@ -3665,7 +3712,8 @@ async function loadDashboard() {
     state.reports.sort(reportSort);
 
     const registryMeta = state.registry.available
-      ? `${state.registry.summary.services || 0} registered ${plural(state.registry.summary.services || 0, "service")} · `
+      ? `${state.registry.summary.services || 0} registered ${plural(state.registry.summary.services || 0, "service")} · ` +
+        `${state.registry.summary.workloads || 0} ${plural(state.registry.summary.workloads || 0, "workload")} · `
       : "Registry unavailable · ";
     meta.textContent =
       `${state.reports.length} monitored ${plural(state.reports.length, "host")} · ` +

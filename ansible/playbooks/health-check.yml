@@ -100,14 +100,15 @@
     - name: Validate infrastructure registry root contract
       ansible.builtin.assert:
         that:
-          - health_dashboard_registry.schema_version | int == 1
+          - health_dashboard_registry.schema_version | int == 2
           - health_dashboard_registry.control_plane is mapping
           - health_dashboard_registry.hosts is mapping
+          - health_dashboard_registry.workloads is mapping
           - health_dashboard_registry.services is mapping
           - health_dashboard_registry.edges is mapping
         fail_msg: >-
           inventory/infrastructure-registry.yml does not satisfy registry
-          schema version 1.
+          schema version 2.
       changed_when: false
 
     - name: Require every monitored host in infrastructure registry
@@ -143,22 +144,35 @@
       loop: "{{ health_dashboard_registry.hosts | dict2items }}"
       changed_when: false
 
+    - name: Validate registered workload relationships
+      ansible.builtin.assert:
+        that:
+          - item.value.name is string
+          - item.value.kind is string
+          - item.value.runtime_host in health_dashboard_registry.hosts
+          - >-
+            item.value.engine is not defined
+            or item.value.engine is none
+            or item.value.engine is string
+        fail_msg: >-
+          Registry workload {{ item.key }} has an invalid runtime host, kind,
+          name, or engine declaration.
+      loop: "{{ health_dashboard_registry.workloads | dict2items }}"
+      changed_when: false
+
     - name: Validate registered service relationships
       ansible.builtin.assert:
         that:
           - item.value.name is string
           - item.value.hostname is string
           - item.value.exposure in ['public', 'internal']
+          - item.value.workload in health_dashboard_registry.workloads
           - >-
             item.value.edge is not defined
             or item.value.edge is none
             or item.value.edge in health_dashboard_registry.edges
-          - >-
-            item.value.runtime_host is not defined
-            or item.value.runtime_host is none
-            or item.value.runtime_host in health_dashboard_registry.hosts
         fail_msg: >-
-          Registry service {{ item.key }} has an invalid host, edge, or
+          Registry service {{ item.key }} has an invalid workload, edge, or
           exposure relationship.
       loop: "{{ health_dashboard_registry.services | dict2items }}"
       changed_when: false

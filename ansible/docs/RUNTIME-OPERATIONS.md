@@ -86,7 +86,7 @@ storage topology, and manifest. Force-refresh the browser after interface change
 2. Inspect the owning process and systemd status.
 3. Inspect the service command; it must name `dashboard/server.py`.
 4. Verify `reports/manifest.json` and `reports/infrastructure-registry.json` exist.
-5. Verify `/api/registry` returns the expected host/service counts and no validation error.
+5. Verify `/api/registry` returns the expected host/workload/service counts and no validation error.
 6. Verify published interface files exist under `reports/`.
 7. Test the remaining HTTP boundaries above, including `/api/events`.
 8. Inspect the journal before changing files.

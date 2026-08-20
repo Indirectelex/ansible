@@ -88,10 +88,11 @@ Inventory groups answer different questions:
 The UI parent-child tree is separate from Ansible group membership, but it is no
 longer a dashboard-only configuration. `inventory/infrastructure-registry.yml`
 is the authoritative maintained source for stable host identity, parent/guest
-relationships, public-service identity, and edge dependencies. The publication
-play verifies that every monitored host exists in the registry and that its
-management address still matches Ansible inventory. The browser receives the
-validated projection through `/api/registry`.
+relationships, runtime workloads, public-service identity, and edge dependencies.
+The publication play verifies that every monitored host exists in the registry,
+that its management address still matches Ansible inventory, and that every
+workload resolves to a registered runtime host. The browser receives the validated
+projection through `/api/registry`.
 
 `dashboard/assets/dashboard-topology.json` now contains only non-secret optional
 integration endpoints such as UniFi. Do not put host topology back into it.
@@ -105,12 +106,14 @@ To add a host safely:
 5. Run the registry tests and a limited health check.
 6. Confirm the published registry, report, and manifest entry before checking the UI.
 
-To add a service, declare its stable name, hostname, exposure, and edge in the
-registry. Set `runtime_host` only when the runtime placement has been confirmed.
-Leaving it `null` is deliberate when the placement is unknown: the control plane
-should represent an unknown relationship explicitly rather than invent one. The
-current public-service mappings are Website and Portal on `ubuntu-server`, and
-ERPNext on `docker-ct`.
+To add an application path, declare the runtime workload first, including its
+stable name, kind, and confirmed `runtime_host`. A service then declares its
+stable name, hostname, exposure, edge, and `workload` reference. The service does
+not duplicate `runtime_host`; `/api/registry` derives that value from the workload.
+This keeps the dependency chain authoritative in one place. The current public
+paths resolve as Website → EchoDATA Website → `ubuntu-server`, Portal → EchoDATA
+Portal → `ubuntu-server`, and ERPNext → ERPNext → `docker-ct`. The ERPNext workload
+is marked as Docker-backed without inventing an unconfirmed container name.
 
 ## Chapter 4 — Capability discovery versus policy
 
@@ -247,7 +250,7 @@ The custom server combines static publication with narrow local APIs:
 | `/` and static paths | GET | Published dashboard and reports |
 | `/api/health-check/status` | GET | Current background action state |
 | `/api/unifi/summary` | GET | Bounded network summary |
-| `/api/registry` | GET | Validated infrastructure identity, topology, services and counts |
+| `/api/registry` | GET | Validated infrastructure identity, topology, workloads, services and counts |
 | `/api/events` | GET | Filtered/paged normalized event history, counts and filter facets |
 | `/api/health-check/<host>` | POST | Run one allowed host health check |
 | `/api/security-update/<host>` | POST | Run one explicitly confirmed security update |
@@ -290,7 +293,9 @@ The browser starts by loading, in parallel:
 It then loads each host report and maintenance history. Registry host records
 drive datacenter parent/guest placement, and registered services appear as their
 own selectable infrastructure section without pretending they have health data.
-A service with no confirmed `runtime_host` is shown as unmapped. The event API is
+Each service resolves through a registered workload to its runtime host, so the
+service inspector can show the workload, runtime engine, host and parent chain.
+The event API is
 polled independently so newly published state changes appear in the retractable drawer
 without turning routine metrics into alerts. "View all" opens the retained event
 timeline. Its host, severity, source and period filters are translated into

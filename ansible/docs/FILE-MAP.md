@@ -9,7 +9,7 @@ file also carries its own `TEACHER NOTE` and `CHANGE INSTRUCTIONS`.
 | --- | --- | --- | --- |
 | `ansible.cfg` | Default inventory, roles, SSH, become, timeout and forks | Every `ansible-playbook` invocation | `ansible-config dump`, inventory graph, syntax check |
 | `inventory/hosts.yml` | Hosts, functional groups, connection identities and feature intent | Play host patterns and feature policy | `ansible-inventory --graph`, limited health check |
-| `inventory/infrastructure-registry.yml` | Stable host identity/topology, edge providers and service relationships | Publication play, `/api/registry`, dashboard | Registry tests, syntax check, published registry smoke check |
+| `inventory/infrastructure-registry.yml` | Stable host identity/topology, runtime workloads, edge providers and service relationships | Publication play, `/api/registry`, dashboard | Registry tests, syntax check, published registry smoke check |
 | `inventory/host_vars/nimbus.yml` | Nimbus-only policy notes; live storage discovery is preferred | Health role for Nimbus | Storage topology tests plus Nimbus limited run |
 
 ## Monitoring entry points
@@ -71,7 +71,7 @@ file also carries its own `TEACHER NOTE` and `CHANGE INSTRUCTIONS`.
 | `dashboard/assets/dashboard.css` | Theme, state presentation and responsive workspace | Browser DOM classes | Light/dark/narrow/reduced-motion inspection |
 | `dashboard/assets/dashboard.js` | Load/state/render/action lifecycle | Browser DOM and custom API | Node syntax, layout tests, functional browser run |
 | `dashboard/assets/dashboard-topology.json` | Non-secret UniFi integration endpoints only | Server integration config | JSON parse, layout/server tests |
-| `dashboard/server.py` | Static report server, registry validation/API, validated actions, UniFi merge and history | Browser and systemd | Server/registry suite plus HTTP smoke checks |
+| `dashboard/server.py` | Static report server, registry/workload validation and API, validated actions, UniFi merge and history | Browser and systemd | Server/registry suite plus HTTP smoke checks |
 
 ## Generated and runtime boundaries
 
@@ -103,7 +103,7 @@ file also carries its own `TEACHER NOTE` and `CHANGE INSTRUCTIONS`.
 | --- | --- |
 | `test_dashboard_layout.py` | Navigator/inspector, drawer, UniFi and storage presentation |
 | `test_dashboard_server.py` | Trust boundary, fixed actions, history and UniFi clients |
-| `test_infrastructure_registry.py` | Registry schema, references, publication and browser consumption |
+| `test_infrastructure_registry.py` | Registry host/workload/service schema, references, publication and browser consumption |
 | `test_patch_intelligence.py` | APT parsing, trusted history and posture transitions |
 | `test_pbs_health.py` | PBS datastore identity/capacity normalization |
 | `test_storage_health.py` | SMART/ZFS evidence and storage joins |

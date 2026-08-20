@@ -279,21 +279,24 @@ def numeric_value(value: Any) -> float:
 # without making the browser or the HTTP server parse Ansible source files.
 
 def validate_infrastructure_registry(payload: Any) -> dict[str, Any]:
-    """Validate and enrich infrastructure registry schema version 1."""
+    """Validate and enrich infrastructure registry schema version 2."""
 
     if not isinstance(payload, dict):
         raise ValueError("Infrastructure registry root must be an object.")
-    if payload.get("schema_version") != 1:
+    if payload.get("schema_version") != 2:
         raise ValueError("Unsupported infrastructure registry schema version.")
 
     control_plane = payload.get("control_plane")
     hosts = payload.get("hosts")
+    workloads = payload.get("workloads")
     services = payload.get("services")
     edges = payload.get("edges")
     if not isinstance(control_plane, dict):
         raise ValueError("Registry control_plane must be an object.")
     if not isinstance(hosts, dict):
         raise ValueError("Registry hosts must be an object.")
+    if not isinstance(workloads, dict):
+        raise ValueError("Registry workloads must be an object.")
     if not isinstance(services, dict):
         raise ValueError("Registry services must be an object.")
     if not isinstance(edges, dict):
@@ -330,6 +333,32 @@ def validate_infrastructure_registry(payload: Any) -> dict[str, Any]:
         if not isinstance(edge, dict) or not isinstance(edge.get("name"), str):
             raise ValueError(f"Registry edge {edge_id} requires a name.")
 
+    for workload_id, workload in workloads.items():
+        if not isinstance(workload_id, str) or not HOST_PATTERN.fullmatch(workload_id):
+            raise ValueError(f"Invalid registry workload ID: {workload_id!r}")
+        if not isinstance(workload, dict):
+            raise ValueError(
+                f"Registry workload {workload_id} must be an object.",
+            )
+        if not isinstance(workload.get("name"), str) or not workload["name"].strip():
+            raise ValueError(f"Registry workload {workload_id} requires a name.")
+        if not isinstance(workload.get("kind"), str) or not workload["kind"].strip():
+            raise ValueError(f"Registry workload {workload_id} requires kind.")
+        runtime_host = workload.get("runtime_host")
+        if runtime_host not in hosts:
+            raise ValueError(
+                f"Registry workload {workload_id} references unknown host "
+                f"{runtime_host!r}.",
+            )
+        engine = workload.get("engine")
+        if engine is not None and (
+            not isinstance(engine, str) or not engine.strip()
+        ):
+            raise ValueError(
+                f"Registry workload {workload_id} engine must be a string.",
+            )
+
+    normalized_services: dict[str, Any] = {}
     mapped_services = 0
     for service_id, service in services.items():
         if not isinstance(service_id, str) or not HOST_PATTERN.fullmatch(service_id):
@@ -349,14 +378,13 @@ def validate_infrastructure_registry(payload: Any) -> dict[str, Any]:
                 f"Registry service {service_id} has invalid exposure.",
             )
 
-        runtime_host = service.get("runtime_host")
-        if runtime_host is not None:
-            if runtime_host not in hosts:
-                raise ValueError(
-                    f"Registry service {service_id} references unknown host "
-                    f"{runtime_host!r}.",
-                )
-            mapped_services += 1
+        workload_id = service.get("workload")
+        if workload_id not in workloads:
+            raise ValueError(
+                f"Registry service {service_id} references unknown workload "
+                f"{workload_id!r}.",
+            )
+        mapped_services += 1
 
         edge = service.get("edge")
         if edge is not None and edge not in edges:
@@ -365,10 +393,16 @@ def validate_infrastructure_registry(payload: Any) -> dict[str, Any]:
                 f"{edge!r}.",
             )
 
+        normalized_service = dict(service)
+        normalized_service["runtime_host"] = workloads[workload_id]["runtime_host"]
+        normalized_services[service_id] = normalized_service
+
     normalized = dict(payload)
+    normalized["services"] = normalized_services
     normalized["available"] = True
     normalized["summary"] = {
         "hosts": len(hosts),
+        "workloads": len(workloads),
         "services": len(services),
         "mapped_services": mapped_services,
         "unmapped_services": len(services) - mapped_services,

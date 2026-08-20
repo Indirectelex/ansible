@@ -1,10 +1,10 @@
 """Protect the EchoDATA infrastructure registry contract.
 
 TEACHER NOTE — CHAPTER 3A
-Purpose: prove that the maintained registry contains the monitored fleet and
-public-service identity, that server validation rejects broken relationships,
-and that publication/browser code consumes the registry rather than a second
-hand-maintained topology map.
+Purpose: prove that the maintained registry contains the monitored fleet,
+runtime workloads and public-service identity; that server validation rejects
+broken relationships; and that publication/browser code consumes the registry
+rather than a second hand-maintained topology map.
 CHANGE INSTRUCTIONS: add fixtures whenever registry schema or relationship
 rules change; never weaken validation merely to accept an inconsistent source.
 """
@@ -39,10 +39,10 @@ class InfrastructureRegistryTests(unittest.TestCase):
         )
         return source["infrastructure_registry"]
 
-    def test_registry_contains_current_hosts_and_public_services(self) -> None:
+    def test_registry_contains_current_hosts_workloads_and_public_services(self) -> None:
         registry = self.registry()
 
-        self.assertEqual(registry["schema_version"], 1)
+        self.assertEqual(registry["schema_version"], 2)
         self.assertEqual(
             set(registry["hosts"]),
             {"docker-ct", "nimbus", "pbs", "scale", "ubuntu-server", "zebulon"},
@@ -50,6 +50,21 @@ class InfrastructureRegistryTests(unittest.TestCase):
         self.assertEqual(registry["hosts"]["docker-ct"]["parent"], "zebulon")
         self.assertEqual(registry["hosts"]["scale"]["parent"], "nimbus")
         self.assertEqual(registry["hosts"]["pbs"]["guest_id"], 999)
+
+        self.assertEqual(
+            registry["workloads"]["website-app"]["runtime_host"],
+            "ubuntu-server",
+        )
+        self.assertEqual(
+            registry["workloads"]["portal-app"]["runtime_host"],
+            "ubuntu-server",
+        )
+        self.assertEqual(
+            registry["workloads"]["erpnext-stack"]["runtime_host"],
+            "docker-ct",
+        )
+        self.assertEqual(registry["workloads"]["erpnext-stack"]["engine"], "docker")
+
         self.assertEqual(registry["services"]["website"]["hostname"], "echodata.ca")
         self.assertEqual(
             registry["services"]["portal"]["hostname"],
@@ -62,20 +77,30 @@ class InfrastructureRegistryTests(unittest.TestCase):
         for service in registry["services"].values():
             self.assertEqual(service["edge"], "cloudflare")
             self.assertEqual(service["exposure"], "public")
-        self.assertEqual(registry["services"]["website"]["runtime_host"], "ubuntu-server")
-        self.assertEqual(registry["services"]["portal"]["runtime_host"], "ubuntu-server")
-        self.assertEqual(registry["services"]["erpnext"]["runtime_host"], "docker-ct")
+            self.assertNotIn("runtime_host", service)
+        self.assertEqual(registry["services"]["website"]["workload"], "website-app")
+        self.assertEqual(registry["services"]["portal"]["workload"], "portal-app")
+        self.assertEqual(registry["services"]["erpnext"]["workload"], "erpnext-stack")
 
-    def test_server_validates_registry_and_reports_mapping_gaps(self) -> None:
+    def test_server_validates_registry_and_derives_runtime_hosts(self) -> None:
         registry = self.registry()
         normalized = dashboard_server.validate_infrastructure_registry(registry)
 
         self.assertTrue(normalized["available"])
         self.assertEqual(normalized["summary"]["hosts"], 6)
+        self.assertEqual(normalized["summary"]["workloads"], 3)
         self.assertEqual(normalized["summary"]["services"], 3)
         self.assertEqual(normalized["summary"]["mapped_services"], 3)
         self.assertEqual(normalized["summary"]["unmapped_services"], 0)
         self.assertEqual(normalized["summary"]["edges"], 1)
+        self.assertEqual(
+            normalized["services"]["website"]["runtime_host"],
+            "ubuntu-server",
+        )
+        self.assertEqual(
+            normalized["services"]["erpnext"]["runtime_host"],
+            "docker-ct",
+        )
 
     def test_server_rejects_broken_registry_relationships(self) -> None:
         registry = self.registry()
@@ -85,27 +110,42 @@ class InfrastructureRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid parent"):
             dashboard_server.validate_infrastructure_registry(bad_parent)
 
-        bad_runtime = deepcopy(registry)
-        bad_runtime["services"]["erpnext"]["runtime_host"] = "missing-host"
+        bad_workload_host = deepcopy(registry)
+        bad_workload_host["workloads"]["erpnext-stack"]["runtime_host"] = "missing-host"
         with self.assertRaisesRegex(ValueError, "unknown host"):
-            dashboard_server.validate_infrastructure_registry(bad_runtime)
+            dashboard_server.validate_infrastructure_registry(bad_workload_host)
+
+        bad_service_workload = deepcopy(registry)
+        bad_service_workload["services"]["erpnext"]["workload"] = "missing-workload"
+        with self.assertRaisesRegex(ValueError, "unknown workload"):
+            dashboard_server.validate_infrastructure_registry(bad_service_workload)
 
         bad_edge = deepcopy(registry)
         bad_edge["services"]["portal"]["edge"] = "missing-edge"
         with self.assertRaisesRegex(ValueError, "unknown edge"):
             dashboard_server.validate_infrastructure_registry(bad_edge)
 
-    def test_publication_validates_inventory_and_writes_registry_json(self) -> None:
+    def test_server_rejects_invalid_workload_engine(self) -> None:
+        registry = self.registry()
+        bad_engine = deepcopy(registry)
+        bad_engine["workloads"]["erpnext-stack"]["engine"] = []
+
+        with self.assertRaisesRegex(ValueError, "engine must be a string"):
+            dashboard_server.validate_infrastructure_registry(bad_engine)
+
+    def test_publication_validates_inventory_workloads_and_registry_json(self) -> None:
         playbook = (ROOT / "playbooks/health-check.yml").read_text(encoding="utf-8")
 
         self.assertIn("Load infrastructure registry source", playbook)
         self.assertIn("Require every monitored host in infrastructure registry", playbook)
         self.assertIn("Validate registered host identity and topology", playbook)
+        self.assertIn("Validate registered workload relationships", playbook)
         self.assertIn("Validate registered service relationships", playbook)
         self.assertIn("infrastructure-registry.json", playbook)
         self.assertIn("hostvars[item.key].ansible_host", playbook)
+        self.assertIn("item.value.workload in health_dashboard_registry.workloads", playbook)
 
-    def test_dashboard_consumes_registry_for_topology_and_services(self) -> None:
+    def test_dashboard_consumes_registry_for_topology_workloads_and_services(self) -> None:
         javascript = (ROOT / "dashboard/assets/dashboard.js").read_text(
             encoding="utf-8",
         )
@@ -118,8 +158,11 @@ class InfrastructureRegistryTests(unittest.TestCase):
 
         self.assertIn('API_REGISTRY_PATH = "/api/registry"', server)
         self.assertIn('fetch("api/registry"', javascript)
+        self.assertIn("function registryWorkloads()", javascript)
+        self.assertIn("function workloadForService(service)", javascript)
         self.assertIn("function registryServices()", javascript)
         self.assertIn("function renderServiceInspector(service)", javascript)
+        self.assertIn("Dependency chain", javascript)
         self.assertIn("function renderRegistryHostContext(report)", javascript)
         self.assertNotIn("nodes", topology)
         self.assertIn("infrastructure-registry.yml", topology["_teacher_notes"]["purpose"])

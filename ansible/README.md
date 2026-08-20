@@ -29,7 +29,7 @@ The critical distinction is between **source files** and **published files**:
 
 1. `inventory/hosts.yml` defines Ansible connection/group membership, while
    `inventory/infrastructure-registry.yml` declares stable infrastructure
-   identity, topology, edge dependencies, and service relationships.
+   identity, topology, runtime workloads, edge dependencies, and service relationships.
 2. `playbooks/health-check.yml` checks Linux and TrueNAS hosts.
 3. `roles/health_check/` discovers capabilities, applies policy, collects raw
    evidence, normalizes it, assigns status, and builds the dashboard schema.
@@ -38,7 +38,7 @@ The critical distinction is between **source files** and **published files**:
    publishes the maintained HTML/CSS/JavaScript, registry, manifest, and live
    storage topology into `reports/`.
 6. `dashboard/server.py` serves that directory on `127.0.0.1:8088`, validates
-   and exposes `/api/registry`, adds UniFi data, and provides narrowly bounded
+   and exposes `/api/registry`, resolves service placement through workloads, adds UniFi data, and provides narrowly bounded
    maintenance endpoints.
 7. The browser loads the registry, manifest, host reports, storage topology,
    event history, maintenance history, and optional UniFi summary.
