@@ -99,11 +99,35 @@ class DashboardLayoutTests(unittest.TestCase):
         self.assertIn('id="event-history-list"', html)
         self.assertIn('id="event-history-context"', html)
         self.assertIn("function renderEventHistory", javascript)
-        self.assertIn('fetch("api/events?limit=50"', javascript)
+        self.assertIn('loadEventHistory({limit: 50})', javascript)
         self.assertIn("startEventHistoryPolling", javascript)
         self.assertIn(".event-history-row", stylesheet)
         self.assertIn('API_EVENTS_PATH = "/api/events"', server)
         self.assertIn('".state" / "dashboard" / "events.db"', server)
+
+    def test_event_history_full_view_has_filters_counts_and_details(self) -> None:
+        html = (ROOT / "dashboard/index.html").read_text()
+        javascript = (ROOT / "dashboard/assets/dashboard.js").read_text()
+        stylesheet = (ROOT / "dashboard/assets/dashboard.css").read_text()
+        server = (ROOT / "dashboard/server.py").read_text()
+
+        for selector in [
+            'id="event-history-dialog"',
+            'id="event-filter-host"',
+            'id="event-filter-severity"',
+            'id="event-filter-source"',
+            'id="event-filter-period"',
+            'id="event-history-summary"',
+            'id="event-history-load-more"',
+        ]:
+            self.assertIn(selector, html)
+        self.assertIn("function refreshFullEventHistory", javascript)
+        self.assertIn("function renderEventHistorySummary", javascript)
+        self.assertIn("new URLSearchParams()", javascript)
+        self.assertIn("event-history-detail", stylesheet)
+        self.assertIn("EVENT_HISTORY_RETENTION_DAYS = 90", server)
+        self.assertIn("def event_summary(", server)
+        self.assertIn("def event_facets(", server)
 
     def test_smart_status_badges_explain_why_states_differ(self) -> None:
         javascript = (ROOT / "dashboard/assets/dashboard.js").read_text()

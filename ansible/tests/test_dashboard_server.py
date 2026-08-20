@@ -15,6 +15,7 @@ import json
 import tempfile
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
@@ -577,6 +578,101 @@ class DashboardServerTests(unittest.TestCase):
             dashboard_server.event_status("healthy"),
             "OK",
         )
+
+    def test_event_history_period_summary_facets_and_paging(self) -> None:
+        store = dashboard_server.EventStore(
+            self.ansible_dir / ".state" / "dashboard" / "events.db",
+            self.reports_dir,
+        )
+        store.sync_reports()
+
+        now = datetime.now(timezone.utc)
+        seeded = [
+            {
+                "occurred_at": (now - timedelta(hours=2)).isoformat(),
+                "host": "nimbus",
+                "source": "health",
+                "severity": "WARNING",
+                "event_type": "state_change",
+                "message": "Warning started",
+                "previous_state": "OK",
+                "current_state": "WARNING",
+                "fingerprint": "period-warning",
+            },
+            {
+                "occurred_at": (now - timedelta(hours=1)).isoformat(),
+                "host": "nimbus",
+                "source": "health",
+                "severity": "OK",
+                "event_type": "state_change",
+                "message": "Recovered",
+                "previous_state": "WARNING",
+                "current_state": "OK",
+                "fingerprint": "period-recovered",
+            },
+            {
+                "occurred_at": (now - timedelta(days=3)).isoformat(),
+                "host": "nimbus",
+                "source": "smart",
+                "severity": "WATCH",
+                "event_type": "metric_change",
+                "message": "Older SMART change",
+                "previous_state": "1",
+                "current_state": "2",
+                "fingerprint": "period-old-smart",
+            },
+        ]
+        with dashboard_server.closing(store._connect()) as connection, connection:
+            for event in seeded:
+                store._insert_event(connection, event)
+
+        recent = store.list_events(period="24h", limit=1)
+        self.assertEqual(len(recent), 1)
+        self.assertEqual(recent[0]["message"], "Recovered")
+        next_page = store.list_events(period="24h", limit=1, offset=1)
+        self.assertEqual(next_page[0]["message"], "Warning started")
+
+        summary = store.event_summary(period="24h")
+        self.assertEqual(summary["total"], 2)
+        self.assertEqual(summary["by_severity"]["WARNING"], 1)
+        self.assertEqual(summary["by_severity"]["OK"], 1)
+        self.assertEqual(summary["recovered"], 1)
+
+        filtered = store.event_summary(host="nimbus", severity="WARNING", period="7d")
+        self.assertEqual(filtered["total"], 1)
+        facets = store.event_facets()
+        self.assertEqual(facets["hosts"], ["docker-ct", "nimbus"])
+        self.assertIn("health", facets["sources"])
+        self.assertIn("smart", facets["sources"])
+        self.assertEqual(store.list_events(period="invalid"), [])
+
+    def test_event_history_prunes_events_older_than_retention(self) -> None:
+        store = dashboard_server.EventStore(
+            self.ansible_dir / ".state" / "dashboard" / "events.db",
+            self.reports_dir,
+        )
+        store.sync_reports()
+
+        old_event = {
+            "occurred_at": (
+                datetime.now(timezone.utc)
+                - timedelta(days=dashboard_server.EVENT_HISTORY_RETENTION_DAYS + 1)
+            ).isoformat(),
+            "host": "nimbus",
+            "source": "health",
+            "severity": "WARNING",
+            "event_type": "state_change",
+            "message": "Expired event",
+            "previous_state": "OK",
+            "current_state": "WARNING",
+            "fingerprint": "expired-event",
+        }
+        with dashboard_server.closing(store._connect()) as connection, connection:
+            store._insert_event(connection, old_event)
+
+        self.assertEqual(store.event_summary(period="all")["total"], 1)
+        store.sync_reports()
+        self.assertEqual(store.event_summary(period="all")["total"], 0)
 
     def test_only_manifest_hosts_are_allowed(self) -> None:
         controller = dashboard_server.HealthCheckController(

@@ -34,6 +34,18 @@ const state = {
   eventHistoryAvailable: true,
   eventHistoryError: "",
   eventHistoryPollId: null,
+  eventHistoryView: {
+    events: [],
+    total: 0,
+    summary: {total: 0, by_severity: {}, recovered: 0},
+    facets: {hosts: [], sources: []},
+    retentionDays: 90,
+    loading: false,
+    error: "",
+    offset: 0,
+    limit: 100,
+    filters: {host: "", severity: "", source: "", period: "24h"},
+  },
   selectedHost: null,
   unifi: null,
   collapsedHosts: new Set(),
@@ -113,6 +125,18 @@ const activityLogContext = document.querySelector("#activity-log-context");
 const activityLogOutput = document.querySelector("#activity-log-output");
 const eventHistoryContext = document.querySelector("#event-history-context");
 const eventHistoryList = document.querySelector("#event-history-list");
+const eventHistoryOpenButton = document.querySelector("#event-history-open");
+const eventHistoryDialog = document.querySelector("#event-history-dialog");
+const eventHistoryDialogClose = document.querySelector("#event-history-dialog-close");
+const eventHistoryRetention = document.querySelector("#event-history-retention");
+const eventHistorySummary = document.querySelector("#event-history-summary");
+const eventHistoryFullList = document.querySelector("#event-history-full-list");
+const eventHistoryResultCount = document.querySelector("#event-history-result-count");
+const eventHistoryLoadMore = document.querySelector("#event-history-load-more");
+const eventFilterHost = document.querySelector("#event-filter-host");
+const eventFilterSeverity = document.querySelector("#event-filter-severity");
+const eventFilterSource = document.querySelector("#event-filter-source");
+const eventFilterPeriod = document.querySelector("#event-filter-period");
 
 // ---------------------------------------------------------------------------
 // CHAPTER 13.2 — Defensive formatting and status normalization
@@ -770,21 +794,53 @@ function renderEventHistory() {
   }).join("");
 }
 
-async function loadEventHistory() {
+function eventHistoryParams(options = {}) {
+  const params = new URLSearchParams();
+  params.set("limit", String(options.limit ?? 50));
+  params.set("offset", String(options.offset ?? 0));
+
+  for (const key of ["host", "severity", "source", "period"]) {
+    const value = options[key];
+    if (value) {
+      params.set(key, value);
+    }
+  }
+
+  return params;
+}
+
+async function loadEventHistory(options = {}) {
   try {
-    const response = await fetch("api/events?limit=50", {cache: "no-store"});
+    const params = eventHistoryParams(options);
+    const response = await fetch(`api/events?${params.toString()}`, {cache: "no-store"});
     const payload = await responsePayload(response);
     if (!response.ok || !Array.isArray(payload.events)) {
       throw new Error(payload.error || `Event API returned HTTP ${response.status}.`);
     }
-    return {available: true, error: "", events: payload.events};
+    return {
+      available: true,
+      error: "",
+      events: payload.events,
+      total: Number(payload.total ?? payload.count ?? payload.events.length),
+      summary: payload.summary || {total: 0, by_severity: {}, recovered: 0},
+      facets: payload.facets || {hosts: [], sources: []},
+      retentionDays: Number(payload.retention_days ?? 90),
+    };
   } catch (error) {
-    return {available: false, error: error.message, events: []};
+    return {
+      available: false,
+      error: error.message,
+      events: [],
+      total: 0,
+      summary: {total: 0, by_severity: {}, recovered: 0},
+      facets: {hosts: [], sources: []},
+      retentionDays: 90,
+    };
   }
 }
 
 async function refreshEventHistory() {
-  const history = await loadEventHistory();
+  const history = await loadEventHistory({limit: 50});
   state.eventHistoryAvailable = history.available;
   state.eventHistoryError = history.error;
   state.events = history.events;
@@ -796,6 +852,205 @@ function startEventHistoryPolling() {
     window.clearInterval(state.eventHistoryPollId);
   }
   state.eventHistoryPollId = window.setInterval(refreshEventHistory, 30000);
+}
+
+function replaceSelectOptions(select, values, emptyLabel, formatter = (value) => value) {
+  if (!select) {
+    return;
+  }
+
+  const selected = select.value;
+  select.innerHTML = [
+    `<option value="">${escapeHtml(emptyLabel)}</option>`,
+    ...values.map((value) => (
+      `<option value="${escapeHtml(value)}">${escapeHtml(formatter(value))}</option>`
+    )),
+  ].join("");
+
+  if (values.includes(selected)) {
+    select.value = selected;
+  }
+}
+
+function renderEventHistorySummary(summary = {}) {
+  if (!eventHistorySummary) {
+    return;
+  }
+
+  const counts = summary.by_severity || {};
+  const cards = [
+    ["Total", summary.total || 0, ""],
+    ["WATCH", counts.WATCH || 0, "WATCH"],
+    ["WARNING", counts.WARNING || 0, "WARNING"],
+    ["CRITICAL", counts.CRITICAL || 0, "CRITICAL"],
+    ["Recovered", summary.recovered || 0, "OK"],
+  ];
+
+  eventHistorySummary.innerHTML = cards.map(([label, value, severity]) => `
+    <div class="event-count-card">
+      ${severity ? `
+        <span class="status-dot ${healthStatusClass(severity)}" aria-hidden="true"></span>
+      ` : ""}
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `).join("");
+}
+
+function renderFullEventHistory() {
+  if (!eventHistoryFullList || !eventHistoryResultCount || !eventHistoryLoadMore) {
+    return;
+  }
+
+  const view = state.eventHistoryView;
+  renderEventHistorySummary(view.summary);
+
+  if (eventHistoryRetention) {
+    eventHistoryRetention.textContent = `Retained locally for ${view.retentionDays} days.`;
+  }
+
+  if (view.loading && view.events.length === 0) {
+    eventHistoryResultCount.textContent = "Loading…";
+    eventHistoryFullList.innerHTML = `
+      <div class="event-history-empty">Loading event history…</div>
+    `;
+    eventHistoryLoadMore.hidden = true;
+    return;
+  }
+
+  if (view.error) {
+    eventHistoryResultCount.textContent = "Unavailable";
+    eventHistoryFullList.innerHTML = `
+      <div class="event-history-empty">
+        Event history could not be loaded.
+        <small>${escapeHtml(view.error)}</small>
+      </div>
+    `;
+    eventHistoryLoadMore.hidden = true;
+    return;
+  }
+
+  eventHistoryResultCount.textContent = view.total === 1
+    ? "1 matching event"
+    : `${view.total} matching events`;
+
+  if (view.events.length === 0) {
+    eventHistoryFullList.innerHTML = `
+      <div class="event-history-empty">
+        No events match the selected filters.
+      </div>
+    `;
+    eventHistoryLoadMore.hidden = true;
+    return;
+  }
+
+  eventHistoryFullList.innerHTML = view.events.map((event) => {
+    const severity = healthStatusName(event.severity);
+    const transition = event.previous_state
+      ? `${event.previous_state} → ${event.current_state || severity}`
+      : (event.current_state || severity);
+
+    return `
+      <details class="event-history-detail">
+        <summary>
+          <span class="status-dot ${healthStatusClass(severity)}" aria-hidden="true"></span>
+          <span class="event-history-detail-main">
+            <span class="event-history-detail-meta">
+              <strong>${escapeHtml(event.host || "Unknown host")}</strong>
+              <span>${escapeHtml(eventSourceLabel(event.source))}</span>
+              <span>${escapeHtml(transition)}</span>
+              <time datetime="${escapeHtml(event.occurred_at || "")}">
+                ${escapeHtml(formatAge(event.occurred_at))}
+              </time>
+            </span>
+            <span class="event-history-detail-message">
+              ${escapeHtml(event.message || "Infrastructure state changed.")}
+            </span>
+          </span>
+        </summary>
+        <div class="event-history-detail-grid">
+          <div><span>Host</span><strong>${escapeHtml(event.host || "Unknown")}</strong></div>
+          <div><span>Source</span><strong>${escapeHtml(eventSourceLabel(event.source))}</strong></div>
+          <div><span>Severity</span><strong>${escapeHtml(severity)}</strong></div>
+          <div><span>Event type</span><strong>${escapeHtml(String(event.event_type || "").replaceAll("_", " "))}</strong></div>
+          <div><span>Previous</span><strong>${escapeHtml(event.previous_state || "—")}</strong></div>
+          <div><span>Current</span><strong>${escapeHtml(event.current_state || severity)}</strong></div>
+          <div class="event-history-detail-time">
+            <span>Occurred</span><strong>${escapeHtml(formatDate(event.occurred_at))}</strong>
+          </div>
+        </div>
+      </details>
+    `;
+  }).join("");
+
+  eventHistoryLoadMore.hidden = view.events.length >= view.total;
+  eventHistoryLoadMore.disabled = view.loading;
+  eventHistoryLoadMore.textContent = view.loading ? "Loading…" : "Load more";
+}
+
+function currentEventHistoryFilters() {
+  return {
+    host: eventFilterHost?.value || "",
+    severity: eventFilterSeverity?.value || "",
+    source: eventFilterSource?.value || "",
+    period: eventFilterPeriod?.value || "24h",
+  };
+}
+
+function updateEventHistoryFacets(facets) {
+  const hosts = Array.isArray(facets?.hosts) ? facets.hosts : [];
+  const sources = Array.isArray(facets?.sources) ? facets.sources : [];
+  replaceSelectOptions(eventFilterHost, hosts, "All hosts");
+  replaceSelectOptions(eventFilterSource, sources, "All sources", eventSourceLabel);
+}
+
+async function refreshFullEventHistory({append = false} = {}) {
+  const view = state.eventHistoryView;
+  view.loading = true;
+  view.error = "";
+  if (!append) {
+    view.offset = 0;
+    view.events = [];
+  }
+  renderFullEventHistory();
+
+  const filters = currentEventHistoryFilters();
+  view.filters = filters;
+  const history = await loadEventHistory({
+    ...filters,
+    limit: view.limit,
+    offset: append ? view.events.length : 0,
+  });
+
+  view.loading = false;
+  if (!history.available) {
+    view.error = history.error;
+    renderFullEventHistory();
+    return;
+  }
+
+  view.events = append
+    ? [...view.events, ...history.events]
+    : history.events;
+  view.offset = view.events.length;
+  view.total = history.total;
+  view.summary = history.summary;
+  view.facets = history.facets;
+  view.retentionDays = history.retentionDays;
+  updateEventHistoryFacets(history.facets);
+  renderFullEventHistory();
+}
+
+async function openEventHistoryDialog() {
+  if (!eventHistoryDialog) {
+    return;
+  }
+  if (typeof eventHistoryDialog.showModal === "function") {
+    eventHistoryDialog.showModal();
+  } else {
+    eventHistoryDialog.setAttribute("open", "");
+  }
+  await refreshFullEventHistory();
 }
 
 // ---------------------------------------------------------------------------
@@ -3464,6 +3719,28 @@ activityDrawerToggle.addEventListener("click", () => {
   const isOpen = activityDrawerToggle.getAttribute("aria-expanded") === "true";
   setActivityDrawerOpen(!isOpen);
 });
+
+eventHistoryOpenButton?.addEventListener("click", openEventHistoryDialog);
+eventHistoryDialogClose?.addEventListener("click", () => eventHistoryDialog.close());
+
+eventHistoryDialog?.addEventListener("click", (event) => {
+  if (event.target === eventHistoryDialog) {
+    eventHistoryDialog.close();
+  }
+});
+
+for (const filter of [
+  eventFilterHost,
+  eventFilterSeverity,
+  eventFilterSource,
+  eventFilterPeriod,
+]) {
+  filter?.addEventListener("change", () => refreshFullEventHistory());
+}
+
+eventHistoryLoadMore?.addEventListener("click", () => (
+  refreshFullEventHistory({append: true})
+));
 
 document
   .querySelector("#dialog-close")

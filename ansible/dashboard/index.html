@@ -16,7 +16,7 @@
     content="width=device-width, initial-scale=1"
   >
   <title>Infrastructure Health &amp; Patch Posture</title>
-  <link rel="stylesheet" href="assets/dashboard.css?v=28">
+  <link rel="stylesheet" href="assets/dashboard.css?v=29">
 </head>
 <body>
   <!-- CHAPTER 13.1 — Global identity, freshness, and manual refresh -->
@@ -98,7 +98,16 @@
         <section class="event-history-panel" aria-label="Recent infrastructure events">
           <header class="activity-log-heading">
             <strong>Recent events</strong>
-            <span id="event-history-context">Loading…</span>
+            <div class="event-history-heading-actions">
+              <span id="event-history-context">Loading…</span>
+              <button
+                id="event-history-open"
+                class="event-history-link-button"
+                type="button"
+              >
+                View all
+              </button>
+            </div>
           </header>
 
           <div
@@ -129,6 +138,95 @@
     </div>
   </section>
 
+  <!-- CHAPTER 13.3A — Filterable retained infrastructure event history -->
+  <dialog id="event-history-dialog" class="event-history-dialog">
+    <div class="dialog-header">
+      <div>
+        <p class="eyebrow">Infrastructure timeline</p>
+        <h2>Event History</h2>
+        <p id="event-history-retention" class="muted">Retained locally for 90 days.</p>
+      </div>
+
+      <button
+        id="event-history-dialog-close"
+        class="secondary-button"
+        type="button"
+      >
+        Close
+      </button>
+    </div>
+
+    <div class="event-history-dialog-content">
+      <section class="event-history-filters" aria-label="Event history filters">
+        <label>
+          <span>Host</span>
+          <select id="event-filter-host">
+            <option value="">All hosts</option>
+          </select>
+        </label>
+        <label>
+          <span>Severity</span>
+          <select id="event-filter-severity">
+            <option value="">All severities</option>
+            <option value="WATCH">WATCH</option>
+            <option value="WARNING">WARNING</option>
+            <option value="CRITICAL">CRITICAL</option>
+            <option value="UNREACHABLE">UNREACHABLE</option>
+            <option value="OK">OK / recovered</option>
+            <option value="UNKNOWN">UNKNOWN</option>
+          </select>
+        </label>
+        <label>
+          <span>Source</span>
+          <select id="event-filter-source">
+            <option value="">All sources</option>
+          </select>
+        </label>
+        <label>
+          <span>Period</span>
+          <select id="event-filter-period">
+            <option value="1h">Last hour</option>
+            <option value="24h" selected>Last 24 hours</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+            <option value="all">All retained</option>
+          </select>
+        </label>
+      </section>
+
+      <section
+        id="event-history-summary"
+        class="event-history-summary"
+        aria-label="Event counts"
+      ></section>
+
+      <div class="event-history-results-heading">
+        <strong>Timeline</strong>
+        <span id="event-history-result-count" class="muted">Loading…</span>
+      </div>
+
+      <div
+        id="event-history-full-list"
+        class="event-history-full-list"
+        aria-live="polite"
+      >
+        <div class="event-history-empty">Loading event history…</div>
+      </div>
+
+      <div class="event-history-pagination">
+        <button
+          id="event-history-load-more"
+          class="secondary-button"
+          type="button"
+          hidden
+        >
+          Load more
+        </button>
+      </div>
+    </div>
+  </dialog>
+
   <!-- CHAPTER 13.4 — Full host detail view rendered on demand -->
   <dialog id="host-dialog">
     <div class="dialog-header">
@@ -150,6 +248,6 @@
   </dialog>
 
   <!-- CHAPTER 13.5 — Application startup; bump version after JS publication -->
-  <script src="assets/dashboard.js?v=31"></script>
+  <script src="assets/dashboard.js?v=32"></script>
 </body>
 </html>

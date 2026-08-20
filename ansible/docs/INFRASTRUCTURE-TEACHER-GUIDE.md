@@ -232,7 +232,7 @@ The custom server combines static publication with narrow local APIs:
 | `/` and static paths | GET | Published dashboard and reports |
 | `/api/health-check/status` | GET | Current background action state |
 | `/api/unifi/summary` | GET | Bounded network summary |
-| `/api/events` | GET | Recent normalized infrastructure event history |
+| `/api/events` | GET | Filtered/paged normalized event history, counts and filter facets |
 | `/api/health-check/<host>` | POST | Run one allowed host health check |
 | `/api/security-update/<host>` | POST | Run one explicitly confirmed security update |
 
@@ -273,9 +273,14 @@ The browser starts by loading, in parallel:
 
 It then loads each host report and maintenance history. The event API is polled
 independently so newly published state changes appear in the retractable drawer
-without turning routine metrics into alerts. The state object is the single
-in-browser model. Render functions convert that state to HTML; event delegation
-converts clicks into selections, collapses, dialogs, or validated API calls.
+without turning routine metrics into alerts. "View all" opens the retained event
+timeline. Its host, severity, source and period filters are translated into
+bounded `/api/events` query parameters; the same response returns filtered
+counts, safe filter facets and pagination totals. Individual events expand to
+show their source, transition, event type and exact occurrence time. The state
+object is the single in-browser model. Render functions convert that state to
+HTML; event delegation converts clicks into selections, collapses, dialogs, or
+validated API calls.
 
 The Network node is conditional on a valid UniFi summary. Its absence should
 be treated as integration degradation, not as proof the network is healthy.
@@ -310,7 +315,10 @@ A service being `active` proves only that a process exists. Functional checks
 must also verify the manifest, action status, event-history endpoint, and UniFi
 endpoint. Event state lives in `.state/dashboard/events.db`, outside the browser
 web root. The first observation establishes a quiet baseline; later report
-versions create state-change and selected SMART counter events.
+versions create state-change and selected SMART counter events. Events older
+than 90 days are pruned by the server during synchronization. The API accepts
+only bounded host/source/severity filters and the closed period set `1h`, `24h`,
+`7d`, `30d`, `90d`, or `all`; result pages remain capped by the server.
 
 ## Chapter 16 — Extending the system
 

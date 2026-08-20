@@ -53,9 +53,14 @@ systemctl --user status hackwell-dashboard.service --no-pager -l
 journalctl --user -u hackwell-dashboard.service -n 100 --no-pager
 curl --fail --silent --show-error http://127.0.0.1:8088/manifest.json >/dev/null
 curl --fail --silent --show-error http://127.0.0.1:8088/api/health-check/status
-curl --fail --silent --show-error 'http://127.0.0.1:8088/api/events?limit=5'
+curl --fail --silent --show-error 'http://127.0.0.1:8088/api/events?limit=5&period=24h'
 curl --silent --show-error http://127.0.0.1:8088/api/unifi/summary
 ```
+
+The event endpoint also supports bounded `host`, `severity`, `source`,
+`period`, `limit`, and `offset` query parameters. The response includes the
+matching event page, total count, severity/recovery summary, filter facets, and
+the configured 90-day retention window.
 
 Interpret the UniFi result carefully:
 

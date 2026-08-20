@@ -41,7 +41,7 @@ import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import partial
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -73,6 +73,15 @@ MAINTENANCE_HISTORY_LIMIT = 10
 MAINTENANCE_OUTPUT_LINES = 160
 EVENT_HISTORY_DEFAULT_LIMIT = 50
 EVENT_HISTORY_MAX_LIMIT = 200
+EVENT_HISTORY_RETENTION_DAYS = 90
+EVENT_HISTORY_PERIOD_HOURS = {
+    "1h": 1,
+    "24h": 24,
+    "7d": 7 * 24,
+    "30d": 30 * 24,
+    "90d": 90 * 24,
+    "all": None,
+}
 PROMETHEUS_TIMEOUT_SECONDS = 4
 UNIFI_CONTROLLER_TIMEOUT_SECONDS = 5
 UNIFI_METRICS = (
@@ -508,12 +517,75 @@ class EventStore:
             ),
         )
 
+    @staticmethod
+    def _period_cutoff(period: str | None) -> str | None:
+        """Return an ISO UTC cutoff for one closed-set history period."""
+
+        normalized = str(period or "all").lower()
+        if normalized not in EVENT_HISTORY_PERIOD_HOURS:
+            return None
+        hours = EVENT_HISTORY_PERIOD_HOURS[normalized]
+        if hours is None:
+            return ""
+        return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+    @staticmethod
+    def _event_filters(
+        host: str | None = None,
+        severity: str | None = None,
+        source: str | None = None,
+        period: str | None = "all",
+    ) -> tuple[list[str], list[Any]] | None:
+        """Build a bounded WHERE clause shared by history queries."""
+
+        clauses: list[str] = []
+        parameters: list[Any] = []
+
+        if host:
+            if not HOST_PATTERN.fullmatch(host):
+                return None
+            clauses.append("host = ?")
+            parameters.append(host)
+        if severity:
+            normalized = event_status(severity)
+            clauses.append("severity = ?")
+            parameters.append(normalized)
+        if source:
+            normalized_source = source.strip().lower()
+            if not re.fullmatch(r"[a-z0-9_-]+", normalized_source):
+                return None
+            clauses.append("source = ?")
+            parameters.append(normalized_source)
+
+        cutoff = EventStore._period_cutoff(period)
+        if cutoff is None:
+            return None
+        if cutoff:
+            clauses.append("datetime(occurred_at) >= datetime(?)")
+            parameters.append(cutoff)
+
+        return clauses, parameters
+
+    def _prune_events(self, connection: sqlite3.Connection) -> int:
+        """Delete events older than the fixed retention window."""
+
+        cutoff = (
+            datetime.now(timezone.utc)
+            - timedelta(days=EVENT_HISTORY_RETENTION_DAYS)
+        ).isoformat()
+        cursor = connection.execute(
+            "DELETE FROM events WHERE datetime(occurred_at) < datetime(?)",
+            (cutoff,),
+        )
+        return max(0, cursor.rowcount)
+
     def sync_reports(self) -> int:
         """Compare newly published reports with saved state and append events."""
 
         inserted_before = 0
         inserted_after = 0
         with self.lock, closing(self._connect()) as connection, connection:
+            self._prune_events(connection)
             inserted_before = connection.execute(
                 "SELECT COUNT(*) FROM events",
             ).fetchone()[0]
@@ -675,43 +747,96 @@ class EventStore:
         host: str | None = None,
         severity: str | None = None,
         source: str | None = None,
+        period: str | None = "all",
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """Return newest events with bounded optional filters."""
+        """Return newest events with bounded optional filters and paging."""
 
         limit = max(1, min(int(limit), EVENT_HISTORY_MAX_LIMIT))
-        clauses: list[str] = []
-        parameters: list[Any] = []
-
-        if host:
-            if not HOST_PATTERN.fullmatch(host):
-                return []
-            clauses.append("host = ?")
-            parameters.append(host)
-        if severity:
-            normalized = event_status(severity)
-            clauses.append("severity = ?")
-            parameters.append(normalized)
-        if source:
-            normalized_source = source.strip().lower()
-            if not re.fullmatch(r"[a-z0-9_-]+", normalized_source):
-                return []
-            clauses.append("source = ?")
-            parameters.append(normalized_source)
-
+        offset = max(0, int(offset))
+        filters = self._event_filters(host, severity, source, period)
+        if filters is None:
+            return []
+        clauses, parameters = filters
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        parameters.append(limit)
+        parameters.extend([limit, offset])
         with closing(self._connect()) as connection:
             rows = connection.execute(
                 f"""
                 SELECT id, occurred_at, host, source, severity, event_type,
                        message, previous_state, current_state
                 FROM events{where}
-                ORDER BY occurred_at DESC, id DESC
-                LIMIT ?
+                ORDER BY datetime(occurred_at) DESC, id DESC
+                LIMIT ? OFFSET ?
                 """,
                 parameters,
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def event_summary(
+        self,
+        host: str | None = None,
+        severity: str | None = None,
+        source: str | None = None,
+        period: str | None = "all",
+    ) -> dict[str, Any]:
+        """Return total, severity counts, and recovery count for a view."""
+
+        filters = self._event_filters(host, severity, source, period)
+        empty = {
+            "total": 0,
+            "by_severity": {},
+            "recovered": 0,
+        }
+        if filters is None:
+            return empty
+        clauses, parameters = filters
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT severity, COUNT(*) AS count
+                FROM events{where}
+                GROUP BY severity
+                """,
+                parameters,
+            ).fetchall()
+            total = sum(int(row["count"]) for row in rows)
+
+            recovery_clauses = [*clauses, "event_type = ?", "current_state = ?"]
+            recovery_parameters = [*parameters, "state_change", "OK"]
+            recovery_where = f" WHERE {' AND '.join(recovery_clauses)}"
+            recovered = connection.execute(
+                f"SELECT COUNT(*) FROM events{recovery_where}",
+                recovery_parameters,
+            ).fetchone()[0]
+
+        return {
+            "total": total,
+            "by_severity": {row["severity"]: int(row["count"]) for row in rows},
+            "recovered": int(recovered),
+        }
+
+    def event_facets(self) -> dict[str, list[str]]:
+        """Return safe filter choices from current monitored state and history."""
+
+        hosts = self._manifest_hosts()
+        with closing(self._connect()) as connection:
+            source_rows = connection.execute(
+                """
+                SELECT DISTINCT source FROM (
+                    SELECT source FROM events
+                    UNION ALL
+                    SELECT source FROM event_state
+                )
+                WHERE source <> ''
+                ORDER BY source
+                """,
+            ).fetchall()
+        return {
+            "hosts": hosts,
+            "sources": [str(row["source"]) for row in source_rows],
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -2305,12 +2430,37 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                     )
                 except (TypeError, ValueError):
                     limit = EVENT_HISTORY_DEFAULT_LIMIT
+                try:
+                    offset = int(query.get("offset", ["0"])[0])
+                except (TypeError, ValueError):
+                    offset = 0
+
+                host = query.get("host", [None])[0]
+                severity = query.get("severity", [None])[0]
+                source = query.get("source", [None])[0]
+                period = query.get("period", ["all"])[0]
+                if period not in EVENT_HISTORY_PERIOD_HOURS:
+                    self.send_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {"error": "Unsupported event-history period."},
+                    )
+                    return
+
                 events = self.event_store.list_events(
                     limit=limit,
-                    host=query.get("host", [None])[0],
-                    severity=query.get("severity", [None])[0],
-                    source=query.get("source", [None])[0],
+                    offset=offset,
+                    host=host,
+                    severity=severity,
+                    source=source,
+                    period=period,
                 )
+                summary = self.event_store.event_summary(
+                    host=host,
+                    severity=severity,
+                    source=source,
+                    period=period,
+                )
+                facets = self.event_store.event_facets()
             except (OSError, sqlite3.Error) as error:
                 self.send_json(
                     HTTPStatus.SERVICE_UNAVAILABLE,
@@ -2319,7 +2469,14 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 return
             self.send_json(
                 HTTPStatus.OK,
-                {"events": events, "count": len(events)},
+                {
+                    "events": events,
+                    "count": len(events),
+                    "total": summary["total"],
+                    "summary": summary,
+                    "facets": facets,
+                    "retention_days": EVENT_HISTORY_RETENTION_DAYS,
+                },
             )
             return
 
