@@ -7,8 +7,9 @@
  *
  * Data flow
  *   manifest -> host reports/maintenance -> state -> pure render helpers -> DOM.
- *   topology and storage topology enrich relationships. /api/unifi/summary is
- *   optional but its absence must never be mistaken for healthy network data.
+ *   /api/registry provides infrastructure identity/topology/service intent;
+ *   storage topology adds live disk relationships. /api/unifi/summary remains
+ *   optional and its absence must never be mistaken for healthy network data.
  *
  * Security boundary
  *   The browser can request only server-defined actions. It does not create
@@ -47,6 +48,15 @@ const state = {
     filters: {host: "", severity: "", source: "", period: "24h"},
   },
   selectedHost: null,
+  registry: {
+    available: false,
+    error: "",
+    control_plane: {name: "EchoDATA", datacenter_label: "Datacenter"},
+    edges: {},
+    hosts: {},
+    services: {},
+    summary: {hosts: 0, services: 0, mapped_services: 0, unmapped_services: 0, edges: 0},
+  },
   unifi: null,
   collapsedHosts: new Set(),
   collapsedSections: new Set(),
@@ -1061,7 +1071,10 @@ async function openEventHistoryDialog() {
 
 function topologyFor(report) {
   const manifest = report.dashboard_manifest || {};
-  const configured = state.topology.nodes?.[report.host] || {};
+  const configured =
+    state.registry.hosts?.[report.host] ||
+    state.topology.nodes?.[report.host] ||
+    {};
 
   return {
     parent:
@@ -1366,6 +1379,116 @@ function renderUnifiTreeRow() {
   `;
 }
 
+function serviceNodeId(serviceId) {
+  return `@service:${serviceId}`;
+}
+
+function registryServices() {
+  return Object.entries(state.registry.services || {})
+    .map(([id, service]) => ({id, ...service}))
+    .sort((left, right) => String(left.name).localeCompare(String(right.name)));
+}
+
+function selectedRegistryService() {
+  const selected = String(state.selectedHost || "");
+
+  if (!selected.startsWith("@service:")) {
+    return null;
+  }
+
+  const serviceId = selected.slice("@service:".length);
+  const service = state.registry.services?.[serviceId];
+  return service ? {id: serviceId, ...service} : null;
+}
+
+function serviceIconMarkup() {
+  return `
+    <span class="node-icon node-icon-service" aria-hidden="true">
+      <svg viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8"></circle>
+        <path d="M4 12h16M12 4a13 13 0 0 1 0 16M12 4a13 13 0 0 0 0 16"></path>
+      </svg>
+    </span>
+  `;
+}
+
+function renderServiceTreeRow(service) {
+  const nodeId = serviceNodeId(service.id);
+  const selected = state.selectedHost === nodeId;
+  const exposure = service.exposure === "public" ? "Public service" : "Internal service";
+
+  return `
+    <div
+      class="tree-row integration-tree-row service-tree-row ${selected ? "is-selected" : ""}"
+      style="--tree-depth: 0"
+      role="treeitem"
+      aria-level="2"
+      aria-selected="${selected ? "true" : "false"}"
+      aria-label="${escapeHtml(service.name)} · ${escapeHtml(exposure)}"
+      tabindex="0"
+      data-action="select-host"
+      data-host="${escapeHtml(nodeId)}"
+    >
+      <span class="tree-name-cell">
+        <span class="tree-indent" aria-hidden="true"></span>
+        <span class="tree-toggle-spacer" aria-hidden="true"></span>
+        ${serviceIconMarkup()}
+        <span class="host-identity">
+          <span class="host-name-line">
+            <strong>${escapeHtml(service.name)}</strong>
+          </span>
+          <small>${escapeHtml(service.hostname)}</small>
+        </span>
+      </span>
+    </div>
+  `;
+}
+
+function renderServiceInspector(service) {
+  const runtimeHost = service.runtime_host || null;
+  const edge = service.edge ? state.registry.edges?.[service.edge] : null;
+  const runtimeText = runtimeHost || "Not mapped yet";
+  const edgeText = edge?.name || service.edge || "Direct / none declared";
+
+  inspector.innerHTML = `
+    <header class="inspector-header">
+      <div class="inspector-title">
+        ${serviceIconMarkup()}
+        <div>
+          <p>${escapeHtml(service.exposure === "public" ? "Public service" : "Internal service")}</p>
+          <h2>${escapeHtml(service.name)}</h2>
+        </div>
+      </div>
+      <span class="registry-badge">Registered</span>
+    </header>
+
+    <dl class="inspector-metrics registry-service-metrics">
+      <div>
+        <dt>Hostname</dt>
+        <dd>${escapeHtml(service.hostname)}</dd>
+      </div>
+      <div>
+        <dt>Exposure</dt>
+        <dd>${escapeHtml(service.exposure || "Unknown")}</dd>
+      </div>
+      <div>
+        <dt>Edge</dt>
+        <dd>${escapeHtml(edgeText)}</dd>
+      </div>
+      <div>
+        <dt>Runtime host</dt>
+        <dd>${escapeHtml(runtimeText)}</dd>
+      </div>
+    </dl>
+
+    ${
+      runtimeHost
+        ? `<p class="registry-note">Runtime relationship is declared by the EchoDATA infrastructure registry.</p>`
+        : `<p class="registry-note registry-note-unmapped">Runtime host has not been mapped yet. The registry records that gap instead of guessing where this service runs.</p>`
+    }
+  `;
+}
+
 function renderInfrastructureSection(
   sectionId,
   label,
@@ -1404,11 +1527,17 @@ function renderInfrastructureSection(
 
 function renderFleetTree(reports) {
   const integrationCount = state.unifi ? 1 : 0;
-  filterCount.textContent = integrationCount
-    ? `${reports.length} hosts · ${integrationCount} integration`
-    : `${reports.length} of ${state.reports.length} hosts`;
+  const services = registryServices();
+  const countParts = [`${reports.length} ${plural(reports.length, "host")}`];
+  if (integrationCount) {
+    countParts.push(`${integrationCount} integration`);
+  }
+  if (services.length) {
+    countParts.push(`${services.length} ${plural(services.length, "service")}`);
+  }
+  filterCount.textContent = countParts.join(" · ");
 
-  if (reports.length === 0 && !state.unifi) {
+  if (reports.length === 0 && !state.unifi && services.length === 0) {
     grid.innerHTML = `
       <div class="tree-empty-state">
         <strong>No matching hosts</strong>
@@ -1454,6 +1583,12 @@ function renderFleetTree(reports) {
       <path d="m7 7.5 3 3M17 7.5l-3 3M7 16.5l3-3M17 16.5l-3-3"></path>
     </svg>
   `;
+  const servicesIcon = `
+    <svg class="datacenter-icon services-section-icon" aria-hidden="true" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="8"></circle>
+      <path d="M4 12h16M12 4a13 13 0 0 1 0 16M12 4a13 13 0 0 0 0 16"></path>
+    </svg>
+  `;
 
   grid.innerHTML = `
     ${renderInfrastructureSection(
@@ -1471,6 +1606,17 @@ function renderFleetTree(reports) {
             "1 integration",
             networkIcon,
             renderUnifiTreeRow(),
+          )
+        : ""
+    }
+    ${
+      services.length
+        ? renderInfrastructureSection(
+            "services",
+            "Services",
+            `${services.length} registered`,
+            servicesIcon,
+            services.map(renderServiceTreeRow).join(""),
           )
         : ""
     }
@@ -1880,6 +2026,34 @@ function renderUnifiInspector(unifi) {
   `;
 }
 
+function renderRegistryHostContext(report) {
+  const registered = state.registry.hosts?.[report.host];
+
+  if (!registered) {
+    return state.registry.available
+      ? '<p class="registry-note registry-note-unmapped">This monitored host is missing from the infrastructure registry.</p>'
+      : "";
+  }
+
+  const parent = registered.parent || "Datacenter root";
+  const address = registered.management_address || "Not declared";
+  const hostedServices = registryServices().filter(
+    (service) => service.runtime_host === report.host,
+  );
+  const serviceText = hostedServices.length
+    ? hostedServices.map((service) => service.name).join(", ")
+    : "None mapped";
+
+  return `
+    <dl class="registry-host-context">
+      <div><dt>Registry</dt><dd>Registered</dd></div>
+      <div><dt>Management</dt><dd>${escapeHtml(address)}</dd></div>
+      <div><dt>Parent</dt><dd>${escapeHtml(parent)}</dd></div>
+      <div><dt>Services</dt><dd>${escapeHtml(serviceText)}</dd></div>
+    </dl>
+  `;
+}
+
 function renderInspector(report) {
   if (!report) {
     inspector.innerHTML = `
@@ -1914,6 +2088,8 @@ function renderInspector(report) {
     </header>
 
     ${renderActionGuidance(report)}
+
+    ${renderRegistryHostContext(report)}
 
     <dl class="inspector-metrics">
       <div>
@@ -2029,17 +2205,18 @@ function renderFleetSummary(reports) {
 function renderFleet() {
   const reports = state.reports;
   const unifiSelected = state.unifi && state.selectedHost === UNIFI_NODE_ID;
+  const serviceSelected = selectedRegistryService();
+  const hostSelected = reports.some((report) => report.host === state.selectedHost);
 
-  if (
-    !state.selectedHost ||
-    (!unifiSelected && !reports.some((report) => report.host === state.selectedHost))
-  ) {
+  if (!state.selectedHost || (!unifiSelected && !serviceSelected && !hostSelected)) {
     state.selectedHost = reports[0]?.host || null;
   }
 
   renderFleetTree(reports);
   if (state.unifi && state.selectedHost === UNIFI_NODE_ID) {
     renderUnifiInspector(state.unifi);
+  } else if (selectedRegistryService()) {
+    renderServiceInspector(selectedRegistryService());
   } else {
     renderInspector(
       reports.find((report) => report.host === state.selectedHost) || null,
@@ -3391,27 +3568,32 @@ function reportSort(left, right) {
   );
 }
 
-async function loadTopology() {
+async function loadRegistry() {
   try {
-    const response = await fetch(
-      "assets/dashboard-topology.json",
-      {cache: "no-store"},
-    );
+    const response = await fetch("api/registry", {cache: "no-store"});
 
     if (!response.ok) {
-      return {datacenter_label: "Datacenter", nodes: {}};
+      const payload = await responsePayload(response);
+      return {
+        ...state.registry,
+        available: false,
+        error: payload.error || `Registry returned HTTP ${response.status}`,
+      };
     }
 
-    const topology = await response.json();
+    const registry = await response.json();
     return {
-      datacenter_label: topology.datacenter_label || "Datacenter",
-      nodes:
-        topology.nodes && typeof topology.nodes === "object"
-          ? topology.nodes
-          : {},
+      available: registry.available === true,
+      error: "",
+      generated_at: registry.generated_at || null,
+      control_plane: registry.control_plane || {name: "EchoDATA", datacenter_label: "Datacenter"},
+      edges: registry.edges && typeof registry.edges === "object" ? registry.edges : {},
+      hosts: registry.hosts && typeof registry.hosts === "object" ? registry.hosts : {},
+      services: registry.services && typeof registry.services === "object" ? registry.services : {},
+      summary: registry.summary || {hosts: 0, services: 0, mapped_services: 0, unmapped_services: 0, edges: 0},
     };
   } catch (error) {
-    return {datacenter_label: "Datacenter", nodes: {}};
+    return {...state.registry, available: false, error: error.message};
   }
 }
 
@@ -3454,9 +3636,9 @@ async function loadDashboard() {
     '<div class="empty-state">Loading fleet summary…</div>';
 
   try {
-    const [response, topology, storageTopology, unifi, eventHistory] = await Promise.all([
+    const [response, registry, storageTopology, unifi, eventHistory] = await Promise.all([
       fetch("manifest.json", {cache: "no-store"}),
-      loadTopology(),
+      loadRegistry(),
       loadStorageTopology(),
       loadUnifiSummary(),
       loadEventHistory(),
@@ -3467,7 +3649,11 @@ async function loadDashboard() {
     }
 
     const manifest = await response.json();
-    state.topology = topology;
+    state.registry = registry;
+    state.topology = {
+      datacenter_label: registry.control_plane?.datacenter_label || "Datacenter",
+      nodes: registry.hosts || {},
+    };
     state.storageTopology = storageTopology;
     state.unifi = unifi;
     state.eventHistoryAvailable = eventHistory.available;
@@ -3478,8 +3664,12 @@ async function loadDashboard() {
     );
     state.reports.sort(reportSort);
 
+    const registryMeta = state.registry.available
+      ? `${state.registry.summary.services || 0} registered ${plural(state.registry.summary.services || 0, "service")} · `
+      : "Registry unavailable · ";
     meta.textContent =
       `${state.reports.length} monitored ${plural(state.reports.length, "host")} · ` +
+      registryMeta +
       `${state.unifi ? "UniFi live · " : ""}` +
       `Updated ${formatDate(manifest.generated_at)}`;
 

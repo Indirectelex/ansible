@@ -9,6 +9,7 @@ file also carries its own `TEACHER NOTE` and `CHANGE INSTRUCTIONS`.
 | --- | --- | --- | --- |
 | `ansible.cfg` | Default inventory, roles, SSH, become, timeout and forks | Every `ansible-playbook` invocation | `ansible-config dump`, inventory graph, syntax check |
 | `inventory/hosts.yml` | Hosts, functional groups, connection identities and feature intent | Play host patterns and feature policy | `ansible-inventory --graph`, limited health check |
+| `inventory/infrastructure-registry.yml` | Stable host identity/topology, edge providers and service relationships | Publication play, `/api/registry`, dashboard | Registry tests, syntax check, published registry smoke check |
 | `inventory/host_vars/nimbus.yml` | Nimbus-only policy notes; live storage discovery is preferred | Health role for Nimbus | Storage topology tests plus Nimbus limited run |
 
 ## Monitoring entry points
@@ -69,14 +70,15 @@ file also carries its own `TEACHER NOTE` and `CHANGE INSTRUCTIONS`.
 | `dashboard/index.html` | Semantic mount points and accessibility structure | Browser and JS selectors | Layout tests plus browser inspection |
 | `dashboard/assets/dashboard.css` | Theme, state presentation and responsive workspace | Browser DOM classes | Light/dark/narrow/reduced-motion inspection |
 | `dashboard/assets/dashboard.js` | Load/state/render/action lifecycle | Browser DOM and custom API | Node syntax, layout tests, functional browser run |
-| `dashboard/assets/dashboard-topology.json` | Non-secret tree placement and UniFi endpoints | Browser topology loader and server config | JSON parse, layout/server tests |
-| `dashboard/server.py` | Static report server, validated actions, UniFi merge and history | Browser and systemd | Server suite plus HTTP smoke checks |
+| `dashboard/assets/dashboard-topology.json` | Non-secret UniFi integration endpoints only | Server integration config | JSON parse, layout/server tests |
+| `dashboard/server.py` | Static report server, registry validation/API, validated actions, UniFi merge and history | Browser and systemd | Server/registry suite plus HTTP smoke checks |
 
 ## Generated and runtime boundaries
 
 | Path | Producer | Why it is not maintained source |
 | --- | --- | --- |
 | `reports/manifest.json` | Publication play | Rebuilt from `monitoring_enabled` |
+| `reports/infrastructure-registry.json` | Publication play | Validated projection of the maintained infrastructure registry |
 | `reports/<host>.json` | Health role/TrueNAS tasks | Snapshot of live evidence |
 | `reports/<host>.md` | Markdown template/TrueNAS tasks | Human rendering of snapshot |
 | `reports/storage-topology.json` | Publication play | Snapshot of live correlation |
@@ -101,6 +103,7 @@ file also carries its own `TEACHER NOTE` and `CHANGE INSTRUCTIONS`.
 | --- | --- |
 | `test_dashboard_layout.py` | Navigator/inspector, drawer, UniFi and storage presentation |
 | `test_dashboard_server.py` | Trust boundary, fixed actions, history and UniFi clients |
+| `test_infrastructure_registry.py` | Registry schema, references, publication and browser consumption |
 | `test_patch_intelligence.py` | APT parsing, trusted history and posture transitions |
 | `test_pbs_health.py` | PBS datastore identity/capacity normalization |
 | `test_storage_health.py` | SMART/ZFS evidence and storage joins |

@@ -52,6 +52,7 @@ restart it.
 systemctl --user status hackwell-dashboard.service --no-pager -l
 journalctl --user -u hackwell-dashboard.service -n 100 --no-pager
 curl --fail --silent --show-error http://127.0.0.1:8088/manifest.json >/dev/null
+curl --fail --silent --show-error http://127.0.0.1:8088/api/registry
 curl --fail --silent --show-error http://127.0.0.1:8088/api/health-check/status
 curl --fail --silent --show-error 'http://127.0.0.1:8088/api/events?limit=5&period=24h'
 curl --silent --show-error http://127.0.0.1:8088/api/unifi/summary
@@ -75,15 +76,17 @@ cd "$HOME/infrastructure/ansible"
 ansible-playbook playbooks/health-check.yml
 ```
 
-The final play republishes `index.html`, CSS, JavaScript, topology, storage
-topology, and manifest. Force-refresh the browser after interface changes.
+The final play validates `inventory/infrastructure-registry.yml` against live
+Ansible inventory, then republishes `index.html`, CSS, JavaScript, the registry,
+storage topology, and manifest. Force-refresh the browser after interface changes.
 
 ## Recovery sequence
 
 1. Do not start a second server on port 8088.
 2. Inspect the owning process and systemd status.
 3. Inspect the service command; it must name `dashboard/server.py`.
-4. Verify `reports/manifest.json` exists.
-5. Verify published interface files exist under `reports/`.
-6. Test the HTTP boundaries above, including `/api/events`.
-7. Inspect the journal before changing files.
+4. Verify `reports/manifest.json` and `reports/infrastructure-registry.json` exist.
+5. Verify `/api/registry` returns the expected host/service counts and no validation error.
+6. Verify published interface files exist under `reports/`.
+7. Test the remaining HTTP boundaries above, including `/api/events`.
+8. Inspect the journal before changing files.

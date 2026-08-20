@@ -27,18 +27,21 @@ The critical distinction is between **source files** and **published files**:
 
 ## Normal operating flow
 
-1. `inventory/hosts.yml` defines which machines belong to each functional
-   group.
+1. `inventory/hosts.yml` defines Ansible connection/group membership, while
+   `inventory/infrastructure-registry.yml` declares stable infrastructure
+   identity, topology, edge dependencies, and service relationships.
 2. `playbooks/health-check.yml` checks Linux and TrueNAS hosts.
 3. `roles/health_check/` discovers capabilities, applies policy, collects raw
    evidence, normalizes it, assigns status, and builds the dashboard schema.
 4. Reports are written into `reports/` on the controller laptop.
-5. The playbook publishes the maintained HTML/CSS/JavaScript into `reports/`
-   and writes `manifest.json`.
-6. `dashboard/server.py` serves that directory on `127.0.0.1:8088`, adds UniFi
-   data, and exposes narrowly validated maintenance endpoints.
-7. The browser loads the manifest, host reports, topology, storage topology,
-   maintenance history, and optional UniFi summary.
+5. The playbook validates the infrastructure registry against inventory, then
+   publishes the maintained HTML/CSS/JavaScript, registry, manifest, and live
+   storage topology into `reports/`.
+6. `dashboard/server.py` serves that directory on `127.0.0.1:8088`, validates
+   and exposes `/api/registry`, adds UniFi data, and provides narrowly bounded
+   maintenance endpoints.
+7. The browser loads the registry, manifest, host reports, storage topology,
+   event history, maintenance history, and optional UniFi summary.
 
 ## Run or refresh the system
 

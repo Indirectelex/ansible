@@ -211,16 +211,16 @@ class DashboardLayoutTests(unittest.TestCase):
 
     def test_pbs_is_a_monitored_vm_under_nimbus(self) -> None:
         inventory = (ROOT / "inventory/hosts.yml").read_text()
-        topology = (ROOT / "dashboard/assets/dashboard-topology.json").read_text()
+        registry = (ROOT / "inventory/infrastructure-registry.yml").read_text()
         javascript = (ROOT / "dashboard/assets/dashboard.js").read_text()
         pbs_tasks = (ROOT / "roles/health_check/tasks/modules/pbs.yml").read_text()
 
         self.assertIn("pbs_servers:", inventory)
         self.assertIn("ansible_host: 192.168.12.157", inventory)
         self.assertIn("pbs: true", inventory)
-        self.assertIn('"parent": "nimbus"', topology)
-        self.assertIn('"guest_id": 999', topology)
-        self.assertIn('"kind": "pbs"', topology)
+        self.assertIn("pbs:\n      kind: pbs", registry)
+        self.assertIn("parent: nimbus", registry)
+        self.assertIn("guest_id: 999", registry)
         self.assertIn('pbs: "Proxmox Backup Server VM"', javascript)
         self.assertIn("function renderPbsModuleDetails", javascript)
         self.assertIn("proxmox-backup-manager", pbs_tasks)

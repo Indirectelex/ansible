@@ -3508,3 +3508,99 @@ body {
     margin-left: 0;
   }
 }
+
+/* CHAPTER 13.CSS.8 — Registry identity and service relationships */
+.services-section-row {
+  border-top: 1px solid var(--border);
+}
+
+.services-section-icon,
+.node-icon-service {
+  color: var(--accent);
+  stroke: currentcolor;
+}
+
+.registry-badge {
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent), var(--border) 45%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent), transparent 90%);
+  color: var(--accent);
+  font-size: 0.66rem;
+  font-weight: 760;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.registry-host-context {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.registry-host-context > div {
+  min-width: 0;
+  padding-right: 12px;
+}
+
+.registry-host-context dt {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 0.56rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.registry-host-context dd {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 680;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.registry-note {
+  margin: 16px 18px;
+  padding: 11px 13px;
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.registry-note-unmapped {
+  border-left-color: var(--watch);
+}
+
+.registry-service-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.registry-service-metrics > div:nth-child(3n) {
+  border-right: 1px solid var(--border);
+}
+
+.registry-service-metrics > div:nth-child(2n) {
+  border-right: 0;
+}
+
+.registry-service-metrics > div:nth-last-child(-n + 3) {
+  border-bottom: 1px solid var(--border);
+}
+
+.registry-service-metrics > div:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+@media (max-width: 760px) {
+  .registry-host-context {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 0;
+  }
+}

@@ -81,6 +81,105 @@
         directory_mode: "0750"
       changed_when: false
 
+    # CHAPTER 10.1 — Publish the authoritative infrastructure registry
+    # Identity/topology/service intent is maintained separately from runtime
+    # reports. Validate it against Ansible inventory before exposing it through
+    # the loopback control plane so drift fails publication loudly.
+    - name: Load infrastructure registry source
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../inventory/infrastructure-registry.yml"
+        name: health_dashboard_registry_file
+      changed_when: false
+
+    - name: Normalize infrastructure registry source
+      ansible.builtin.set_fact:
+        health_dashboard_registry: >-
+          {{ health_dashboard_registry_file.infrastructure_registry }}
+      changed_when: false
+
+    - name: Validate infrastructure registry root contract
+      ansible.builtin.assert:
+        that:
+          - health_dashboard_registry.schema_version | int == 1
+          - health_dashboard_registry.control_plane is mapping
+          - health_dashboard_registry.hosts is mapping
+          - health_dashboard_registry.services is mapping
+          - health_dashboard_registry.edges is mapping
+        fail_msg: >-
+          inventory/infrastructure-registry.yml does not satisfy registry
+          schema version 1.
+      changed_when: false
+
+    - name: Require every monitored host in infrastructure registry
+      ansible.builtin.assert:
+        that:
+          - item in health_dashboard_registry.hosts
+        fail_msg: >-
+          Monitored host {{ item }} is missing from
+          inventory/infrastructure-registry.yml.
+      loop: "{{ groups.get('monitoring_enabled', []) | sort }}"
+      changed_when: false
+
+    - name: Validate registered host identity and topology
+      ansible.builtin.assert:
+        that:
+          - item.key in groups.get('all', [])
+          - item.value.kind is string
+          - item.value.management_address is string
+          - >-
+            item.value.management_address | string
+            == hostvars[item.key].ansible_host | string
+          - >-
+            item.value.parent is not defined
+            or item.value.parent is none
+            or item.value.parent in health_dashboard_registry.hosts
+          - >-
+            item.value.parent is not defined
+            or item.value.parent is none
+            or item.value.parent != item.key
+        fail_msg: >-
+          Registry host {{ item.key }} is unknown to inventory, has a drifting
+          management address, or has an invalid parent relationship.
+      loop: "{{ health_dashboard_registry.hosts | dict2items }}"
+      changed_when: false
+
+    - name: Validate registered service relationships
+      ansible.builtin.assert:
+        that:
+          - item.value.name is string
+          - item.value.hostname is string
+          - item.value.exposure in ['public', 'internal']
+          - >-
+            item.value.edge is not defined
+            or item.value.edge is none
+            or item.value.edge in health_dashboard_registry.edges
+          - >-
+            item.value.runtime_host is not defined
+            or item.value.runtime_host is none
+            or item.value.runtime_host in health_dashboard_registry.hosts
+        fail_msg: >-
+          Registry service {{ item.key }} has an invalid host, edge, or
+          exposure relationship.
+      loop: "{{ health_dashboard_registry.services | dict2items }}"
+      changed_when: false
+
+    - name: Publish infrastructure registry
+      ansible.builtin.copy:
+        content: >-
+          {{
+            health_dashboard_registry
+            | combine(
+                {
+                  'generated_at': lookup('pipe', 'date --iso-8601=seconds')
+                },
+                recursive=true
+              )
+            | to_nice_json
+          }}
+        dest: "{{ health_dashboard_report_dir }}/infrastructure-registry.json"
+        mode: "0640"
+      changed_when: false
+
     - name: Initialize live storage topology publication
       ansible.builtin.set_fact:
         health_dashboard_storage_topologies: []

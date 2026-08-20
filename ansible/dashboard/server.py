@@ -65,6 +65,7 @@ LOOPBACK_NAMES = {"127.0.0.1", "localhost", "::1"}
 API_STATUS_PATH = "/api/health-check/status"
 API_UNIFI_SUMMARY_PATH = "/api/unifi/summary"
 API_EVENTS_PATH = "/api/events"
+API_REGISTRY_PATH = "/api/registry"
 API_RUN_PREFIX = "/api/health-check/"
 API_SECURITY_UPDATE_PREFIX = "/api/security-update/"
 REQUEST_HEADER = "X-Health-Dashboard"
@@ -270,7 +271,127 @@ def numeric_value(value: Any) -> float:
 
 
 # ---------------------------------------------------------------------------
-# CHAPTER 11.3 — Persistent event history derived from published reports
+# CHAPTER 11.3 — Infrastructure registry read model
+# ---------------------------------------------------------------------------
+# The maintained YAML registry is validated and published by Ansible as JSON.
+# The server re-validates that published artifact before exposing it to the
+# browser. This keeps dashboard presentation downstream of one registry contract
+# without making the browser or the HTTP server parse Ansible source files.
+
+def validate_infrastructure_registry(payload: Any) -> dict[str, Any]:
+    """Validate and enrich infrastructure registry schema version 1."""
+
+    if not isinstance(payload, dict):
+        raise ValueError("Infrastructure registry root must be an object.")
+    if payload.get("schema_version") != 1:
+        raise ValueError("Unsupported infrastructure registry schema version.")
+
+    control_plane = payload.get("control_plane")
+    hosts = payload.get("hosts")
+    services = payload.get("services")
+    edges = payload.get("edges")
+    if not isinstance(control_plane, dict):
+        raise ValueError("Registry control_plane must be an object.")
+    if not isinstance(hosts, dict):
+        raise ValueError("Registry hosts must be an object.")
+    if not isinstance(services, dict):
+        raise ValueError("Registry services must be an object.")
+    if not isinstance(edges, dict):
+        raise ValueError("Registry edges must be an object.")
+
+    for host_id, host in hosts.items():
+        if not isinstance(host_id, str) or not HOST_PATTERN.fullmatch(host_id):
+            raise ValueError(f"Invalid registry host ID: {host_id!r}")
+        if not isinstance(host, dict):
+            raise ValueError(f"Registry host {host_id} must be an object.")
+        if not isinstance(host.get("kind"), str) or not host["kind"].strip():
+            raise ValueError(f"Registry host {host_id} requires kind.")
+        if not isinstance(host.get("management_address"), str):
+            raise ValueError(
+                f"Registry host {host_id} requires management_address.",
+            )
+        parent = host.get("parent")
+        if parent is not None:
+            if parent == host_id or parent not in hosts:
+                raise ValueError(
+                    f"Registry host {host_id} has invalid parent {parent!r}.",
+                )
+        guest_id = host.get("guest_id")
+        if guest_id is not None and (
+            isinstance(guest_id, bool) or not isinstance(guest_id, int)
+        ):
+            raise ValueError(
+                f"Registry host {host_id} guest_id must be an integer.",
+            )
+
+    for edge_id, edge in edges.items():
+        if not isinstance(edge_id, str) or not HOST_PATTERN.fullmatch(edge_id):
+            raise ValueError(f"Invalid registry edge ID: {edge_id!r}")
+        if not isinstance(edge, dict) or not isinstance(edge.get("name"), str):
+            raise ValueError(f"Registry edge {edge_id} requires a name.")
+
+    mapped_services = 0
+    for service_id, service in services.items():
+        if not isinstance(service_id, str) or not HOST_PATTERN.fullmatch(service_id):
+            raise ValueError(f"Invalid registry service ID: {service_id!r}")
+        if not isinstance(service, dict):
+            raise ValueError(
+                f"Registry service {service_id} must be an object.",
+            )
+        if not isinstance(service.get("name"), str) or not service["name"].strip():
+            raise ValueError(f"Registry service {service_id} requires a name.")
+        if not isinstance(service.get("hostname"), str) or not service["hostname"].strip():
+            raise ValueError(
+                f"Registry service {service_id} requires a hostname.",
+            )
+        if service.get("exposure") not in {"public", "internal"}:
+            raise ValueError(
+                f"Registry service {service_id} has invalid exposure.",
+            )
+
+        runtime_host = service.get("runtime_host")
+        if runtime_host is not None:
+            if runtime_host not in hosts:
+                raise ValueError(
+                    f"Registry service {service_id} references unknown host "
+                    f"{runtime_host!r}.",
+                )
+            mapped_services += 1
+
+        edge = service.get("edge")
+        if edge is not None and edge not in edges:
+            raise ValueError(
+                f"Registry service {service_id} references unknown edge "
+                f"{edge!r}.",
+            )
+
+    normalized = dict(payload)
+    normalized["available"] = True
+    normalized["summary"] = {
+        "hosts": len(hosts),
+        "services": len(services),
+        "mapped_services": mapped_services,
+        "unmapped_services": len(services) - mapped_services,
+        "edges": len(edges),
+    }
+    return normalized
+
+
+class InfrastructureRegistryStore:
+    """Read the validated registry artifact published into reports/."""
+
+    def __init__(self, registry_path: Path) -> None:
+        self.registry_path = registry_path.resolve()
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return the current validated registry with derived counts."""
+
+        payload = json.loads(self.registry_path.read_text(encoding="utf-8"))
+        return validate_infrastructure_registry(payload)
+
+
+# ---------------------------------------------------------------------------
+# CHAPTER 11.4 — Persistent event history derived from published reports
 # ---------------------------------------------------------------------------
 # Event history is deliberately outside reports/ so the SQLite database can
 # never be downloaded through the static web root. The database stores only
@@ -2395,6 +2516,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
 
     controller: HealthCheckController
     event_store: EventStore | None = None
+    registry_store: InfrastructureRegistryStore | None = None
     unifi_client: UnifiPrometheusClient | None = None
 
     def send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
@@ -2412,6 +2534,24 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == API_STATUS_PATH:
             self.send_json(HTTPStatus.OK, {"job": self.controller.snapshot()})
+            return
+
+        if path == API_REGISTRY_PATH:
+            if self.registry_store is None:
+                self.send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": "Infrastructure registry is not configured."},
+                )
+                return
+            try:
+                registry = self.registry_store.snapshot()
+            except (OSError, json.JSONDecodeError, ValueError) as error:
+                self.send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": f"Infrastructure registry unavailable: {error}"},
+                )
+                return
+            self.send_json(HTTPStatus.OK, registry)
             return
 
         if path == API_EVENTS_PATH:
@@ -2659,6 +2799,10 @@ def main() -> None:
 
     controller = HealthCheckController(args.ansible_dir, args.reports_dir)
     DashboardRequestHandler.controller = controller
+    registry_store = InfrastructureRegistryStore(
+        args.reports_dir / "infrastructure-registry.json",
+    )
+    DashboardRequestHandler.registry_store = registry_store
     event_store = EventStore(
         args.ansible_dir / ".state" / "dashboard" / "events.db",
         args.reports_dir,
@@ -2704,6 +2848,7 @@ def main() -> None:
         f"Dashboard: http://{args.bind}:{args.port}\n"
         "Dashboard actions are restricted to manifest hosts on loopback.\n"
         f"Event history: {event_store.database_path}\n"
+        f"Infrastructure registry: {registry_store.registry_path}\n"
         f"UniFi metrics: {prometheus_url or 'disabled'}\n"
         "UniFi device inventory: "
         f"{unifi_controller_url if unifi_controller_client else 'not configured'}",

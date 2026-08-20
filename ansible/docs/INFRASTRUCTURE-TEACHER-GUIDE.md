@@ -38,15 +38,17 @@ Each host becomes a JSON report and a human-readable Markdown report under
 `reports/`. `dashboard_schema.yml` is the contract adapter between internal
 Ansible facts and the browser-facing schema.
 
-The final play in `playbooks/health-check.yml` also publishes the interface,
-storage topology, and manifest. The browser never inventories the fleet on its
-own; it trusts the manifest as the allowed and displayed host set.
+The final play in `playbooks/health-check.yml` also validates and publishes the
+infrastructure registry, interface, live storage topology, and manifest. The
+registry answers what EchoDATA believes exists and how stable components relate;
+the manifest remains the allowed monitored-host set.
 
 ### Layer D: presentation and controlled actions
 
 `dashboard/server.py` serves the published directory. It also:
 
 - reads the manifest as an action allowlist;
+- validates and exposes the published infrastructure registry;
 - runs one fixed Ansible action at a time;
 - stores bounded maintenance history;
 - derives persistent infrastructure events into private SQLite state;
@@ -62,7 +64,7 @@ fleet tree, inspector, detail dialog, network view, and activity drawer.
 | Path | Kind | Responsibility | Safe way to change it |
 | --- | --- | --- | --- |
 | `ansible.cfg` | Configuration | Inventory, roles, SSH and privilege defaults | Validate connectivity and syntax |
-| `inventory/` | Configuration | Hosts, groups, feature intent and overrides | Run inventory graph plus limited health check |
+| `inventory/` | Configuration | Ansible hosts/groups plus authoritative infrastructure registry | Run inventory graph, registry tests and limited health check |
 | `playbooks/health-check.yml` | Orchestration source | Orders collection and publication | Run syntax check and full tests |
 | `roles/health_check/tasks/` | Collection/policy source | Collects and assembles evidence | Test the affected module and schema |
 | `roles/health_check/filter_plugins/` | Interpretation source | Parses and correlates complex evidence | Add fixtures and unit tests |
@@ -83,19 +85,30 @@ Inventory groups answer different questions:
 - technology groups such as `proxmox_hosts` and `pbs_servers`: describe fleet
   intent and make host selection readable.
 
-The UI parent-child tree is separate from Ansible group membership.
-`dashboard/assets/dashboard-topology.json` describes presentation relationships
-such as `scale` under `nimbus`. This separation prevents UI layout choices from
-changing which playbooks run.
+The UI parent-child tree is separate from Ansible group membership, but it is no
+longer a dashboard-only configuration. `inventory/infrastructure-registry.yml`
+is the authoritative maintained source for stable host identity, parent/guest
+relationships, public-service identity, and edge dependencies. The publication
+play verifies that every monitored host exists in the registry and that its
+management address still matches Ansible inventory. The browser receives the
+validated projection through `/api/registry`.
+
+`dashboard/assets/dashboard-topology.json` now contains only non-secret optional
+integration endpoints such as UniFi. Do not put host topology back into it.
 
 To add a host safely:
 
 1. Add it to an appropriate inventory group.
 2. Ensure it is inherited by `monitoring_enabled` if it should appear.
 3. Add only explicit feature overrides that discovery cannot determine.
-4. Add an optional topology entry if it is a guest of another node.
-5. Run a limited health check.
-6. Confirm the new report and manifest entry before checking the UI.
+4. Add the host identity and any parent/guest relationship to the registry.
+5. Run the registry tests and a limited health check.
+6. Confirm the published registry, report, and manifest entry before checking the UI.
+
+To add a service, declare its stable name, hostname, exposure, and edge in the
+registry. Set `runtime_host` only when the runtime placement has been confirmed.
+Leaving it `null` is deliberate: the control plane should represent an unknown
+relationship explicitly rather than invent one.
 
 ## Chapter 4 — Capability discovery versus policy
 
@@ -232,6 +245,7 @@ The custom server combines static publication with narrow local APIs:
 | `/` and static paths | GET | Published dashboard and reports |
 | `/api/health-check/status` | GET | Current background action state |
 | `/api/unifi/summary` | GET | Bounded network summary |
+| `/api/registry` | GET | Validated infrastructure identity, topology, services and counts |
 | `/api/events` | GET | Filtered/paged normalized event history, counts and filter facets |
 | `/api/health-check/<host>` | POST | Run one allowed host health check |
 | `/api/security-update/<host>` | POST | Run one explicitly confirmed security update |
@@ -266,13 +280,16 @@ upstream query failed. These are different failures.
 The browser starts by loading, in parallel:
 
 - `manifest.json`;
-- `assets/dashboard-topology.json`;
+- `/api/registry`;
 - `storage-topology.json`;
 - `/api/unifi/summary`;
 - `/api/events`.
 
-It then loads each host report and maintenance history. The event API is polled
-independently so newly published state changes appear in the retractable drawer
+It then loads each host report and maintenance history. Registry host records
+drive datacenter parent/guest placement, and registered services appear as their
+own selectable infrastructure section without pretending they have health data.
+A service with no confirmed `runtime_host` is shown as unmapped. The event API is
+polled independently so newly published state changes appear in the retractable drawer
 without turning routine metrics into alerts. "View all" opens the retained event
 timeline. Its host, severity, source and period filters are translated into
 bounded `/api/events` query parameters; the same response returns filtered

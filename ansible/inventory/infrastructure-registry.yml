@@ -1,0 +1,77 @@
+---
+# TEACHER NOTE — CHAPTER 3A: EchoDATA infrastructure registry
+# Purpose: declare stable infrastructure identity, parent/guest relationships,
+# public-service identity, and edge dependencies in one human-maintained source.
+# Inputs: confirmed EchoDATA infrastructure facts. Connection credentials and
+# secrets remain outside this file; Ansible inventory still owns SSH mechanics.
+# Outputs: reports/infrastructure-registry.json and /api/registry for the local
+# control plane and dashboard.
+# CHANGE INSTRUCTIONS: change only confirmed facts; keep every monitored host in
+# this registry; reference existing host/edge IDs only; never store credentials
+# or API keys; run the registry/unit tests and publish playbook after edits.
+
+infrastructure_registry:
+  schema_version: 1
+
+  control_plane:
+    name: EchoDATA
+    datacenter_label: Datacenter
+
+  edges:
+    cloudflare:
+      name: Cloudflare
+      kind: edge
+
+  hosts:
+    nimbus:
+      kind: proxmox
+      management_address: 192.168.12.156
+
+    zebulon:
+      kind: proxmox
+      management_address: 192.168.40.6
+
+    docker-ct:
+      kind: lxc
+      parent: zebulon
+      guest_id: 555
+      management_address: 192.168.40.214
+
+    scale:
+      kind: vm
+      parent: nimbus
+      guest_id: 1000
+      management_address: 192.168.12.225
+
+    pbs:
+      kind: pbs
+      parent: nimbus
+      guest_id: 999
+      management_address: 192.168.12.157
+
+    ubuntu-server:
+      kind: vm
+      parent: zebulon
+      management_address: 192.168.40.116
+
+  services:
+    website:
+      name: Website
+      hostname: echodata.ca
+      exposure: public
+      edge: cloudflare
+      runtime_host: null
+
+    portal:
+      name: Portal
+      hostname: signal.echodata.ca
+      exposure: public
+      edge: cloudflare
+      runtime_host: null
+
+    erpnext:
+      name: ERPNext
+      hostname: vault.echodata.ca
+      exposure: public
+      edge: cloudflare
+      runtime_host: null
