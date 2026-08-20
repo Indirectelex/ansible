@@ -192,6 +192,17 @@ class DashboardLayoutTests(unittest.TestCase):
         self.assertIn('data-action="toggle-section"', javascript)
         self.assertIn("state.collapsedSections.has(section)", javascript)
 
+    def test_services_section_is_rendered_before_datacenter(self) -> None:
+        javascript = (ROOT / "dashboard/assets/dashboard.js").read_text()
+
+        services_position = javascript.index(
+            'renderInfrastructureSection(\n            "services",'
+        )
+        datacenter_position = javascript.index(
+            'renderInfrastructureSection(\n      "datacenter",'
+        )
+        self.assertLess(services_position, datacenter_position)
+
     def test_live_storage_topology_is_rendered_from_both_hosts(self) -> None:
         javascript = (ROOT / "dashboard/assets/dashboard.js").read_text()
         stylesheet = (ROOT / "dashboard/assets/dashboard.css").read_text()

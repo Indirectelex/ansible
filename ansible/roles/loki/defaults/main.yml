@@ -1,0 +1,13 @@
+---
+# TEACHER NOTE — OBSERVABILITY 1A DEFAULTS
+# CHANGE INSTRUCTIONS: pin Loki deliberately; runtime host/port/retention belong in the infrastructure registry.
+# EchoDATA single-node Loki defaults. Runtime placement and retention come from
+# inventory/infrastructure-registry.yml through playbooks/logging-stack.yml.
+loki_version: "3.7.0"
+loki_image: "grafana/loki:{{ loki_version }}"
+loki_root_dir: /opt/echodata-observability/loki
+loki_data_dir: /var/lib/echodata-loki
+loki_container_name: echodata-loki
+loki_port: 3100
+loki_bind_address: 127.0.0.1
+loki_retention_days: 15

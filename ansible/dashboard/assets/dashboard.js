@@ -1630,6 +1630,17 @@ function renderFleetTree(reports) {
   `;
 
   grid.innerHTML = `
+    ${
+      services.length
+        ? renderInfrastructureSection(
+            "services",
+            "Services",
+            `${services.length} registered`,
+            servicesIcon,
+            services.map(renderServiceTreeRow).join(""),
+          )
+        : ""
+    }
     ${renderInfrastructureSection(
       "datacenter",
       state.topology.datacenter_label || "Datacenter",
@@ -1645,17 +1656,6 @@ function renderFleetTree(reports) {
             "1 integration",
             networkIcon,
             renderUnifiTreeRow(),
-          )
-        : ""
-    }
-    ${
-      services.length
-        ? renderInfrastructureSection(
-            "services",
-            "Services",
-            `${services.length} registered`,
-            servicesIcon,
-            services.map(renderServiceTreeRow).join(""),
           )
         : ""
     }

@@ -17,8 +17,28 @@ file also carries its own `TEACHER NOTE` and `CHANGE INSTRUCTIONS`.
 | File | Teaches / controls | Immediate consumer | Focused validation |
 | --- | --- | --- | --- |
 | `playbooks/health-check.yml` | Linux, TrueNAS and publication order | CLI and custom server action controller | Syntax check, full tests, generated manifest |
+| `playbooks/logging-stack.yml` | Registry-driven Loki + Alloy deployment | Explicit operator run only | Syntax check, observability tests, Loki readiness |
 | `playbooks/tasks/connectivity-check.yml` | Reachability fallback and fact boundary | Linux play pre-tasks | Reachable and unreachable report fixtures |
 | `playbooks/security-update.yml` | Exact-host, exact-package security mutation | Custom server security action | Static safety tests and maintenance-window run |
+
+## Central logging roles
+
+| File | Teaches / controls | Immediate consumer | Focused validation |
+| --- | --- | --- | --- |
+| `roles/loki/defaults/main.yml` | Pinned Loki image and local paths | Loki role tasks | Observability tests |
+| `roles/loki/templates/loki-config.yml.j2` | TSDB v13 filesystem storage and retention | Loki container | Loki readiness and query smoke test |
+| `roles/loki/templates/compose.yml.j2` | Private-LAN single-node Loki container | Docker Compose on `docker-ct` | `docker compose config` |
+| `roles/loki/tasks/main.yml` | Loki deploy/validate/readiness lifecycle | `logging-stack.yml` | Role execution |
+| `roles/alloy/defaults/main.yml` | Grafana package repository and collector defaults | Alloy role tasks | Observability tests |
+| `roles/alloy/templates/config.alloy.j2` | Journald and optional Docker log pipelines | Alloy systemd service | `alloy validate` |
+| `roles/alloy/tasks/main.yml` | Alloy package, permissions, config and service | `logging-stack.yml` | Service active + Loki ingestion |
+| `roles/alloy/handlers/main.yml` | Bounded Alloy restart | Alloy role changes | Service status |
+| `roles/grafana_loki/defaults/main.yml` | Existing Grafana container and persistent datasource paths | Grafana Loki role | Observability tests |
+| `roles/grafana_loki/templates/loki.yml.j2` | Provisioned `EchoDATA Loki` datasource | Existing Grafana container | Grafana Explore smoke query |
+| `roles/grafana_loki/templates/echodata-logs.json.j2` | Provisioned host/source/container log explorer | Existing Grafana dashboard provider | Dashboard load + Loki query smoke test |
+| `roles/grafana_loki/tasks/main.yml` | Adopt/verify existing Grafana and provision Loki datasource + EchoDATA dashboard | `logging-stack.yml` | Grafana `/api/health` + Loki connectivity |
+| `roles/grafana_loki/handlers/main.yml` | Restart existing Grafana only when provisioning changes | Grafana role changes | Container health |
+
 
 ## Health role policy and orchestration
 
@@ -103,7 +123,8 @@ file also carries its own `TEACHER NOTE` and `CHANGE INSTRUCTIONS`.
 | --- | --- |
 | `test_dashboard_layout.py` | Navigator/inspector, drawer, UniFi and storage presentation |
 | `test_dashboard_server.py` | Trust boundary, fixed actions, history and UniFi clients |
-| `test_infrastructure_registry.py` | Registry host/workload/service schema, references, publication and browser consumption |
+| `test_infrastructure_registry.py` | Registry host/workload/service/observability schema, references, publication and browser consumption |
+| `test_observability_logging.py` | Private Loki placement, retention and Alloy collection/deployment contract |
 | `test_patch_intelligence.py` | APT parsing, trusted history and posture transitions |
 | `test_pbs_health.py` | PBS datastore identity/capacity normalization |
 | `test_storage_health.py` | SMART/ZFS evidence and storage joins |

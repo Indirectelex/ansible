@@ -42,7 +42,7 @@ class InfrastructureRegistryTests(unittest.TestCase):
     def test_registry_contains_current_hosts_workloads_and_public_services(self) -> None:
         registry = self.registry()
 
-        self.assertEqual(registry["schema_version"], 2)
+        self.assertEqual(registry["schema_version"], 3)
         self.assertEqual(
             set(registry["hosts"]),
             {"docker-ct", "nimbus", "pbs", "scale", "ubuntu-server", "zebulon"},
@@ -82,6 +82,17 @@ class InfrastructureRegistryTests(unittest.TestCase):
         self.assertEqual(registry["services"]["portal"]["workload"], "portal-app")
         self.assertEqual(registry["services"]["erpnext"]["workload"], "erpnext-stack")
 
+        logging = registry["observability"]["logging"]
+        self.assertEqual(logging["backend"]["kind"], "loki")
+        self.assertEqual(logging["backend"]["runtime_host"], "docker-ct")
+        self.assertEqual(logging["backend"]["port"], 3100)
+        self.assertEqual(logging["backend"]["retention_days"], 15)
+        self.assertEqual(
+            set(logging["collectors"]["journal"]["hosts"]),
+            {"docker-ct", "nimbus", "pbs", "ubuntu-server", "zebulon"},
+        )
+        self.assertEqual(logging["collectors"]["docker"]["hosts"], ["docker-ct"])
+
     def test_server_validates_registry_and_derives_runtime_hosts(self) -> None:
         registry = self.registry()
         normalized = dashboard_server.validate_infrastructure_registry(registry)
@@ -93,6 +104,11 @@ class InfrastructureRegistryTests(unittest.TestCase):
         self.assertEqual(normalized["summary"]["mapped_services"], 3)
         self.assertEqual(normalized["summary"]["unmapped_services"], 0)
         self.assertEqual(normalized["summary"]["edges"], 1)
+        self.assertEqual(normalized["summary"]["logging_collectors"], 5)
+        self.assertEqual(
+            normalized["observability"]["logging"]["backend"]["endpoint"],
+            "http://192.168.40.214:3100",
+        )
         self.assertEqual(
             normalized["services"]["website"]["runtime_host"],
             "ubuntu-server",
@@ -125,6 +141,16 @@ class InfrastructureRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown edge"):
             dashboard_server.validate_infrastructure_registry(bad_edge)
 
+        bad_logging_host = deepcopy(registry)
+        bad_logging_host["observability"]["logging"]["backend"]["runtime_host"] = "missing-host"
+        with self.assertRaisesRegex(ValueError, "logging backend references unknown host"):
+            dashboard_server.validate_infrastructure_registry(bad_logging_host)
+
+        bad_collector_host = deepcopy(registry)
+        bad_collector_host["observability"]["logging"]["collectors"]["journal"]["hosts"].append("missing-host")
+        with self.assertRaisesRegex(ValueError, "collector journal references unknown host"):
+            dashboard_server.validate_infrastructure_registry(bad_collector_host)
+
     def test_server_rejects_invalid_workload_engine(self) -> None:
         registry = self.registry()
         bad_engine = deepcopy(registry)
@@ -140,6 +166,8 @@ class InfrastructureRegistryTests(unittest.TestCase):
         self.assertIn("Require every monitored host in infrastructure registry", playbook)
         self.assertIn("Validate registered host identity and topology", playbook)
         self.assertIn("Validate registered workload relationships", playbook)
+        self.assertIn("Validate registry observability logging contract", playbook)
+        self.assertIn("Validate registry logging collector hosts", playbook)
         self.assertIn("Validate registered service relationships", playbook)
         self.assertIn("infrastructure-registry.json", playbook)
         self.assertIn("hostvars[item.key].ansible_host", playbook)

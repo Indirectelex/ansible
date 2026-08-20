@@ -1,0 +1,95 @@
+---
+# CHANGE INSTRUCTIONS: preserve Compose validation, pinned image, private bind, and readiness check.
+# TEACHER NOTE — OBSERVABILITY 1A: Loki backend
+# Loki is deliberately a single private-LAN instance at EchoDATA's current
+# scale. It is not exposed through Cloudflare and has no public listener.
+
+- name: Verify Docker Compose is available for Loki
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - version
+  register: loki_compose_version
+  changed_when: false
+
+- name: Ensure Loki configuration directory exists
+  ansible.builtin.file:
+    path: "{{ loki_root_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Ensure Loki data directory exists
+  ansible.builtin.file:
+    path: "{{ loki_data_dir }}"
+    state: directory
+    owner: "10001"
+    group: "10001"
+    mode: "0750"
+
+- name: Publish Loki configuration
+  ansible.builtin.template:
+    src: loki-config.yml.j2
+    dest: "{{ loki_root_dir }}/loki-config.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  register: loki_config_result
+
+- name: Publish Loki Compose definition
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ loki_root_dir }}/compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  register: loki_compose_result
+
+- name: Validate Loki Compose definition
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --file
+      - "{{ loki_root_dir }}/compose.yml"
+      - config
+      - --quiet
+  changed_when: false
+
+- name: Pull pinned Loki image
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --file
+      - "{{ loki_root_dir }}/compose.yml"
+      - pull
+      - --quiet
+  changed_when: false
+
+- name: Start Loki backend
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --file
+      - "{{ loki_root_dir }}/compose.yml"
+      - up
+      - --detach
+      - --remove-orphans
+  changed_when: >-
+    loki_config_result.changed or loki_compose_result.changed
+
+- name: Wait for Loki readiness
+  ansible.builtin.uri:
+    url: "http://{{ loki_bind_address }}:{{ loki_port }}/ready"
+    method: GET
+    status_code: 200
+    return_content: false
+  register: loki_ready
+  retries: 20
+  delay: 3
+  until: loki_ready.status == 200
+  changed_when: false

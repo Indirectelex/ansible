@@ -13,7 +13,7 @@
 # edits.
 
 infrastructure_registry:
-  schema_version: 2
+  schema_version: 3
 
   control_plane:
     name: EchoDATA
@@ -72,6 +72,30 @@ infrastructure_registry:
       kind: docker_workload
       runtime_host: docker-ct
       engine: docker
+
+  observability:
+    logging:
+      backend:
+        name: Loki
+        kind: loki
+        runtime_host: docker-ct
+        port: 3100
+        retention_days: 15
+
+      collectors:
+        journal:
+          kind: alloy
+          hosts:
+            - docker-ct
+            - nimbus
+            - pbs
+            - ubuntu-server
+            - zebulon
+
+        docker:
+          kind: alloy
+          hosts:
+            - docker-ct
 
   services:
     website:

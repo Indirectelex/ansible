@@ -1,0 +1,65 @@
+// TEACHER NOTE — OBSERVABILITY 1B ALLOY PIPELINE
+// CHANGE INSTRUCTIONS: keep stable low-cardinality labels; validate with alloy validate before reload.
+loki.write "echodata" {
+  endpoint {
+    url = "{{ alloy_loki_push_url }}"
+  }
+}
+
+{% if alloy_collect_journal | bool %}
+loki.relabel "journal" {
+  forward_to = [loki.write.echodata.receiver]
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+}
+
+loki.source.journal "system" {
+  max_age       = "12h"
+  labels        = {
+    host   = "{{ inventory_hostname }}",
+    source = "journal",
+  }
+  relabel_rules = loki.relabel.journal.rules
+  forward_to    = [loki.write.echodata.receiver]
+}
+{% endif %}
+
+{% if alloy_collect_docker_logs | bool %}
+discovery.docker "local" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "docker" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+}
+
+loki.source.docker "local" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.local.targets
+  labels        = {
+    host   = "{{ inventory_hostname }}",
+    source = "docker",
+  }
+  relabel_rules = discovery.relabel.docker.rules
+  forward_to    = [loki.write.echodata.receiver]
+}
+{% endif %}

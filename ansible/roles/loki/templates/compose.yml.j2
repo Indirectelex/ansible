@@ -1,0 +1,14 @@
+# TEACHER NOTE — OBSERVABILITY 1A LOKI COMPOSE
+# CHANGE INSTRUCTIONS: never publish Loki through Cloudflare; keep the image pinned and data persistent.
+services:
+  loki:
+    image: "{{ loki_image }}"
+    container_name: "{{ loki_container_name }}"
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/loki/config.yml
+    ports:
+      - "{{ loki_bind_address }}:{{ loki_port }}:3100"
+    volumes:
+      - "{{ loki_root_dir }}/loki-config.yml:/etc/loki/config.yml:ro"
+      - "{{ loki_data_dir }}:/loki"

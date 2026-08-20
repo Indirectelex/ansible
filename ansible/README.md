@@ -29,7 +29,7 @@ The critical distinction is between **source files** and **published files**:
 
 1. `inventory/hosts.yml` defines Ansible connection/group membership, while
    `inventory/infrastructure-registry.yml` declares stable infrastructure
-   identity, topology, runtime workloads, edge dependencies, and service relationships.
+   identity, topology, runtime workloads, edge dependencies, service relationships, and logging intent.
 2. `playbooks/health-check.yml` checks Linux and TrueNAS hosts.
 3. `roles/health_check/` discovers capabilities, applies policy, collects raw
    evidence, normalizes it, assigns status, and builds the dashboard schema.
@@ -42,6 +42,7 @@ The critical distinction is between **source files** and **published files**:
    maintenance endpoints.
 7. The browser loads the registry, manifest, host reports, storage topology,
    event history, maintenance history, and optional UniFi summary.
+8. `playbooks/logging-stack.yml` is a separate, explicit observability mutation: it deploys a private single-node Loki backend on `docker-ct`, Grafana Alloy collectors on registry-declared Linux hosts, and provisions the existing Grafana container with the EchoDATA Loki datasource. It is never run by the routine health-check playbook.
 
 ## Run or refresh the system
 
@@ -64,6 +65,20 @@ Open <http://127.0.0.1:8088/>.
 The tracked service example is in
 `systemd/hackwell-dashboard.service.example`. See
 `docs/RUNTIME-OPERATIONS.md` before installing or changing it.
+
+## Central logging
+
+The logging topology is declared in `inventory/infrastructure-registry.yml`. Loki is kept on the private LAN and is not a Cloudflare/public service. Alloy forwards systemd journal logs from managed Linux hosts; `docker-ct` additionally forwards Docker container logs. The same explicit playbook adopts the existing `grafana` container, provisions `EchoDATA Loki` through its persistent datasource bind mount, and publishes an `EchoDATA Logs` dashboard into the existing dashboard provider; it does not install a second Grafana instance.
+
+Deploy or reconcile logging explicitly:
+
+```bash
+cd "$HOME/infrastructure/ansible"
+ansible-playbook playbooks/logging-stack.yml
+```
+
+This is intentionally separate from `health-check.yml` because installing packages, changing service groups, and starting containers are infrastructure mutations rather than monitoring reads.
+
 
 ## Status language
 

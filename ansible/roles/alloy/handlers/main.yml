@@ -1,0 +1,7 @@
+---
+# TEACHER NOTE — OBSERVABILITY 1B HANDLERS
+# CHANGE INSTRUCTIONS: restart Alloy only after validated package/config/group changes.
+- name: Restart Alloy
+  ansible.builtin.service:
+    name: alloy
+    state: restarted

@@ -100,7 +100,7 @@
     - name: Validate infrastructure registry root contract
       ansible.builtin.assert:
         that:
-          - health_dashboard_registry.schema_version | int == 2
+          - health_dashboard_registry.schema_version | int == 3
           - health_dashboard_registry.control_plane is mapping
           - health_dashboard_registry.hosts is mapping
           - health_dashboard_registry.workloads is mapping
@@ -108,7 +108,7 @@
           - health_dashboard_registry.edges is mapping
         fail_msg: >-
           inventory/infrastructure-registry.yml does not satisfy registry
-          schema version 2.
+          schema version 3.
       changed_when: false
 
     - name: Require every monitored host in infrastructure registry
@@ -158,6 +158,52 @@
           Registry workload {{ item.key }} has an invalid runtime host, kind,
           name, or engine declaration.
       loop: "{{ health_dashboard_registry.workloads | dict2items }}"
+      changed_when: false
+
+    - name: Validate registry observability logging contract
+      ansible.builtin.assert:
+        that:
+          - health_dashboard_registry.observability is mapping
+          - health_dashboard_registry.observability.logging is mapping
+          - health_dashboard_registry.observability.logging.backend is mapping
+          - health_dashboard_registry.observability.logging.collectors is mapping
+          - >-
+            health_dashboard_registry.observability.logging.backend.kind
+            == 'loki'
+          - >-
+            health_dashboard_registry.observability.logging.backend.runtime_host
+            in health_dashboard_registry.hosts
+          - >-
+            health_dashboard_registry.observability.logging.backend.runtime_host
+            in groups.get('docker_hosts', [])
+          - >-
+            health_dashboard_registry.observability.logging.backend.port | int > 0
+          - >-
+            health_dashboard_registry.observability.logging.backend.retention_days
+            | int >= 1
+        fail_msg: >-
+          Registry observability logging backend is incomplete or references an
+          invalid host.
+      changed_when: false
+
+    - name: Validate registry logging collector hosts
+      ansible.builtin.assert:
+        that:
+          - item.value.kind == 'alloy'
+          - item.value.hosts is sequence
+          - item.value.hosts | length > 0
+          - >-
+            item.value.hosts
+            | difference(health_dashboard_registry.hosts.keys() | list)
+            | length == 0
+        fail_msg: >-
+          Registry logging collector {{ item.key }} contains an invalid Alloy
+          declaration or unknown host.
+      loop: >-
+        {{
+          health_dashboard_registry.observability.logging.collectors
+          | dict2items
+        }}
       changed_when: false
 
     - name: Validate registered service relationships

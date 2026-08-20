@@ -1,0 +1,16 @@
+---
+# TEACHER NOTE — OBSERVABILITY 1C DEFAULTS
+# CHANGE INSTRUCTIONS: this role adopts the existing Grafana container; it must
+# not install or replace Grafana. Keep provisioning paths aligned with the
+# persistent bind mounts already used by the unpoller-unifi stack.
+grafana_container_name: grafana
+grafana_http_port: 3000
+grafana_datasource_provisioning_dir: /opt/stacks/unpoller-unifi/grafana/provisioning/datasources
+grafana_loki_datasource_file: "{{ grafana_datasource_provisioning_dir }}/loki.yml"
+grafana_loki_datasource_name: EchoDATA Loki
+
+# EchoDATA-owned dashboards live in their own filesystem folder so the existing
+# provider's foldersFromFilesStructure=true presents them separately from UniFi.
+grafana_dashboard_provisioning_dir: /opt/stacks/unpoller-unifi/grafana/provisioning/dashboards
+grafana_echodata_dashboard_dir: "{{ grafana_dashboard_provisioning_dir }}/EchoDATA"
+grafana_echodata_logs_dashboard_file: "{{ grafana_echodata_dashboard_dir }}/echodata-logs.json"

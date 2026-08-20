@@ -1,0 +1,11 @@
+---
+# TEACHER NOTE — OBSERVABILITY 1C HANDLER
+# CHANGE INSTRUCTIONS: restart only the existing Grafana container when datasource provisioning changes.
+# Restart only the existing Grafana container when provisioning actually changes.
+- name: Restart Grafana container
+  ansible.builtin.command:
+    argv:
+      - docker
+      - restart
+      - "{{ grafana_container_name }}"
+  changed_when: true

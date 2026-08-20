@@ -1,0 +1,124 @@
+---
+# CHANGE INSTRUCTIONS: edit registry intent first; run unit tests and --syntax-check before deployment; deploy Loki before Alloy.
+# TEACHER NOTE — OBSERVABILITY 1: Central logging deployment
+# Purpose: deploy the registry-defined private Loki backend and Grafana Alloy
+# collectors. This playbook is intentionally separate from health-check.yml so
+# routine monitoring never installs packages or changes logging infrastructure.
+
+- name: Deploy EchoDATA Loki backend
+  hosts: docker_hosts
+  become: true
+  gather_facts: false
+  tags:
+    - loki
+
+  vars_files:
+    - "{{ playbook_dir }}/../inventory/infrastructure-registry.yml"
+
+  vars:
+    logging_registry: "{{ infrastructure_registry.observability.logging }}"
+    loki_registry: "{{ logging_registry.backend }}"
+    loki_target_host: "{{ loki_registry.runtime_host }}"
+    loki_bind_address: >-
+      {{ infrastructure_registry.hosts[loki_target_host].management_address }}
+    loki_port: "{{ loki_registry.port }}"
+    loki_retention_days: "{{ loki_registry.retention_days }}"
+
+  pre_tasks:
+    - name: Validate Loki deployment target
+      ansible.builtin.assert:
+        that:
+          - loki_registry.kind == 'loki'
+          - loki_target_host in infrastructure_registry.hosts
+          - loki_target_host in groups.get('docker_hosts', [])
+          - loki_registry.port | int > 0
+          - loki_registry.retention_days | int >= 1
+        fail_msg: >-
+          The infrastructure registry does not define a valid Docker-hosted
+          Loki backend.
+      run_once: true
+
+  roles:
+    - role: loki
+      when: inventory_hostname == loki_target_host
+
+- name: Deploy EchoDATA Alloy log collectors
+  hosts: managed_linux
+  become: true
+  gather_facts: false
+  tags:
+    - alloy
+
+  vars_files:
+    - "{{ playbook_dir }}/../inventory/infrastructure-registry.yml"
+
+  vars:
+    logging_registry: "{{ infrastructure_registry.observability.logging }}"
+    loki_registry: "{{ logging_registry.backend }}"
+    loki_target_host: "{{ loki_registry.runtime_host }}"
+    loki_target_address: >-
+      {{ infrastructure_registry.hosts[loki_target_host].management_address }}
+    alloy_loki_push_url: >-
+      http://{{ loki_target_address }}:{{ loki_registry.port }}/loki/api/v1/push
+    alloy_collect_journal: >-
+      {{ inventory_hostname in logging_registry.collectors.journal.hosts }}
+    alloy_collect_docker_logs: >-
+      {{ inventory_hostname in logging_registry.collectors.docker.hosts }}
+
+  pre_tasks:
+    - name: Require this host in the registry logging collector set
+      ansible.builtin.assert:
+        that:
+          - >-
+            inventory_hostname in logging_registry.collectors.journal.hosts
+            or inventory_hostname in logging_registry.collectors.docker.hosts
+        fail_msg: >-
+          {{ inventory_hostname }} is not declared as an EchoDATA log collector
+          target in inventory/infrastructure-registry.yml.
+
+    - name: Verify Loki is reachable before configuring Alloy
+      ansible.builtin.uri:
+        url: "http://{{ loki_target_address }}:{{ loki_registry.port }}/ready"
+        method: GET
+        status_code: 200
+        return_content: false
+      changed_when: false
+
+  roles:
+    - role: alloy
+
+- name: Provision EchoDATA Loki datasource in existing Grafana
+  hosts: docker_hosts
+  become: true
+  gather_facts: false
+  tags:
+    - grafana
+
+  vars_files:
+    - "{{ playbook_dir }}/../inventory/infrastructure-registry.yml"
+
+  vars:
+    logging_registry: "{{ infrastructure_registry.observability.logging }}"
+    loki_registry: "{{ logging_registry.backend }}"
+    loki_target_host: "{{ loki_registry.runtime_host }}"
+    grafana_target_host: docker-ct
+    grafana_bind_address: >-
+      {{ infrastructure_registry.hosts[grafana_target_host].management_address }}
+    grafana_loki_url: >-
+      http://{{ infrastructure_registry.hosts[loki_target_host].management_address }}:{{ loki_registry.port }}
+
+  pre_tasks:
+    - name: Validate existing Grafana provisioning target
+      ansible.builtin.assert:
+        that:
+          - grafana_target_host in infrastructure_registry.hosts
+          - grafana_target_host in groups.get('docker_hosts', [])
+          - loki_target_host in infrastructure_registry.hosts
+        fail_msg: >-
+          The existing Grafana/Loki placement no longer matches the EchoDATA
+          infrastructure registry.
+      run_once: true
+
+  roles:
+    - role: grafana_loki
+      when: inventory_hostname == grafana_target_host

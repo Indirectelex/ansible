@@ -279,11 +279,11 @@ def numeric_value(value: Any) -> float:
 # without making the browser or the HTTP server parse Ansible source files.
 
 def validate_infrastructure_registry(payload: Any) -> dict[str, Any]:
-    """Validate and enrich infrastructure registry schema version 2."""
+    """Validate and enrich infrastructure registry schema version 3."""
 
     if not isinstance(payload, dict):
         raise ValueError("Infrastructure registry root must be an object.")
-    if payload.get("schema_version") != 2:
+    if payload.get("schema_version") != 3:
         raise ValueError("Unsupported infrastructure registry schema version.")
 
     control_plane = payload.get("control_plane")
@@ -291,6 +291,7 @@ def validate_infrastructure_registry(payload: Any) -> dict[str, Any]:
     workloads = payload.get("workloads")
     services = payload.get("services")
     edges = payload.get("edges")
+    observability = payload.get("observability")
     if not isinstance(control_plane, dict):
         raise ValueError("Registry control_plane must be an object.")
     if not isinstance(hosts, dict):
@@ -301,6 +302,18 @@ def validate_infrastructure_registry(payload: Any) -> dict[str, Any]:
         raise ValueError("Registry services must be an object.")
     if not isinstance(edges, dict):
         raise ValueError("Registry edges must be an object.")
+    if not isinstance(observability, dict):
+        raise ValueError("Registry observability must be an object.")
+
+    logging = observability.get("logging")
+    if not isinstance(logging, dict):
+        raise ValueError("Registry observability.logging must be an object.")
+    logging_backend = logging.get("backend")
+    logging_collectors = logging.get("collectors")
+    if not isinstance(logging_backend, dict):
+        raise ValueError("Registry logging backend must be an object.")
+    if not isinstance(logging_collectors, dict):
+        raise ValueError("Registry logging collectors must be an object.")
 
     for host_id, host in hosts.items():
         if not isinstance(host_id, str) or not HOST_PATTERN.fullmatch(host_id):
@@ -358,6 +371,57 @@ def validate_infrastructure_registry(payload: Any) -> dict[str, Any]:
                 f"Registry workload {workload_id} engine must be a string.",
             )
 
+    backend_host = logging_backend.get("runtime_host")
+    if logging_backend.get("kind") != "loki":
+        raise ValueError("Registry logging backend kind must be loki.")
+    if backend_host not in hosts:
+        raise ValueError("Registry logging backend references unknown host.")
+    backend_port = logging_backend.get("port")
+    if (
+        isinstance(backend_port, bool)
+        or not isinstance(backend_port, int)
+        or backend_port < 1
+        or backend_port > 65535
+    ):
+        raise ValueError("Registry logging backend port must be valid.")
+    retention_days = logging_backend.get("retention_days")
+    if (
+        isinstance(retention_days, bool)
+        or not isinstance(retention_days, int)
+        or retention_days < 1
+    ):
+        raise ValueError("Registry logging retention_days must be positive.")
+
+    normalized_collectors: dict[str, Any] = {}
+    collector_hosts: set[str] = set()
+    for collector_id, collector in logging_collectors.items():
+        if not isinstance(collector_id, str) or not HOST_PATTERN.fullmatch(collector_id):
+            raise ValueError(f"Invalid registry logging collector ID: {collector_id!r}")
+        if not isinstance(collector, dict) or collector.get("kind") != "alloy":
+            raise ValueError(
+                f"Registry logging collector {collector_id} must be Alloy.",
+            )
+        declared_hosts = collector.get("hosts")
+        if not isinstance(declared_hosts, list) or not declared_hosts:
+            raise ValueError(
+                f"Registry logging collector {collector_id} requires hosts.",
+            )
+        if any(host_id not in hosts for host_id in declared_hosts):
+            raise ValueError(
+                f"Registry logging collector {collector_id} references unknown host.",
+            )
+        collector_hosts.update(declared_hosts)
+        normalized_collectors[collector_id] = dict(collector)
+
+    normalized_observability = dict(observability)
+    normalized_logging = dict(logging)
+    normalized_backend = dict(logging_backend)
+    backend_address = hosts[backend_host]["management_address"]
+    normalized_backend["endpoint"] = f"http://{backend_address}:{backend_port}"
+    normalized_logging["backend"] = normalized_backend
+    normalized_logging["collectors"] = normalized_collectors
+    normalized_observability["logging"] = normalized_logging
+
     normalized_services: dict[str, Any] = {}
     mapped_services = 0
     for service_id, service in services.items():
@@ -399,6 +463,7 @@ def validate_infrastructure_registry(payload: Any) -> dict[str, Any]:
 
     normalized = dict(payload)
     normalized["services"] = normalized_services
+    normalized["observability"] = normalized_observability
     normalized["available"] = True
     normalized["summary"] = {
         "hosts": len(hosts),
@@ -407,6 +472,7 @@ def validate_infrastructure_registry(payload: Any) -> dict[str, Any]:
         "mapped_services": mapped_services,
         "unmapped_services": len(services) - mapped_services,
         "edges": len(edges),
+        "logging_collectors": len(collector_hosts),
     }
     return normalized
 

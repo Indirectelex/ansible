@@ -432,3 +432,46 @@ The role stages are:
 
 This workflow is production mutation. Changes require a recovery checkpoint and
 must not be validated merely by the monitoring unit suite.
+
+## Chapter 20 — Registry-driven central logging
+
+Central logging adds a fourth kind of control-plane evidence alongside current
+health, metrics and event history. The registry declares **intent**: Loki runs
+on `docker-ct`, keeps 15 days of logs, Alloy reads journald from managed Linux
+hosts, and `docker-ct` additionally contributes Docker container logs.
+
+`playbooks/logging-stack.yml` is intentionally separate from
+`playbooks/health-check.yml`. The health path remains read-oriented; logging
+installation changes packages, Unix group membership, systemd services and a
+Docker workload, so it requires an explicit operator action.
+
+The first logging topology is:
+
+```text
+nimbus -------- journal --\
+zebulon ------- journal ---\
+pbs ----------- journal ----> Alloy ---> Loki :3100 on docker-ct
+ubuntu-server - journal ---/
+docker-ct ----- journal --/
+       \
+        +------ Docker container logs ---> Alloy ---> Loki
+```
+
+Loki is a private-LAN backend, not a public EchoDATA service. It has no native
+authentication in this deployment and must not be attached to Cloudflare or a
+public reverse proxy. The existing Grafana container on `docker-ct` is the first
+consumer layer: Ansible provisions an `EchoDATA Loki` datasource through the
+stack's persistent datasource directory. The same role publishes an `EchoDATA
+Logs` dashboard into an `EchoDATA/` subdirectory of the already-mounted dashboard
+provisioning path. Because the existing provider uses
+`foldersFromFilesStructure: true`, Grafana presents that dashboard in its own
+EchoDATA folder without replacing or editing the UniFi provider configuration.
+The role adopts that Grafana instance; it never installs or replaces Grafana.
+
+The initial dashboard intentionally uses only low-cardinality labels already
+produced by Alloy: `host`, `source`, and `container`. A free-text regex filter
+searches message content without creating new Loki labels. The dashboard offers
+log volume by host, broad error/warning counters, and a descending log stream.
+The counters are troubleshooting aids based on message text, not authoritative
+health-state transitions; the EchoDATA event engine remains the source for
+WATCH/WARNING/CRITICAL operational state.

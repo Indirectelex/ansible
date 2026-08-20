@@ -1,0 +1,88 @@
+---
+# CHANGE INSTRUCTIONS: never create a second Grafana instance here. This role
+# only adopts the existing persistent datasource provisioning directory and
+# verifies that the existing Grafana container can reach registry-defined Loki.
+# TEACHER NOTE — OBSERVABILITY 1C: Grafana consumes centralized logs
+
+- name: Verify existing Grafana container is present
+  ansible.builtin.command:
+    argv:
+      - docker
+      - inspect
+      - --type
+      - container
+      - "{{ grafana_container_name }}"
+  changed_when: false
+
+- name: Verify Grafana container can reach Loki
+  ansible.builtin.shell: >-
+    docker exec {{ grafana_container_name | quote }} sh -c
+    {{ ('wget -qO- ' ~ grafana_loki_url ~ '/ready 2>/dev/null || curl -fsS ' ~ grafana_loki_url ~ '/ready 2>/dev/null') | quote }}
+  register: grafana_loki_connectivity
+  changed_when: false
+  failed_when: grafana_loki_connectivity.stdout.strip() != 'ready'
+
+- name: Ensure Grafana datasource provisioning directory exists
+  ansible.builtin.file:
+    path: "{{ grafana_datasource_provisioning_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Provision EchoDATA Loki datasource
+  ansible.builtin.template:
+    src: loki.yml.j2
+    dest: "{{ grafana_loki_datasource_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Grafana container
+
+- name: Verify existing Grafana dashboard provider is present
+  ansible.builtin.stat:
+    path: "{{ grafana_dashboard_provisioning_dir }}/provider.yml"
+  register: grafana_dashboard_provider
+
+- name: Require existing Grafana dashboard provider
+  ansible.builtin.assert:
+    that:
+      - grafana_dashboard_provider.stat.exists
+      - grafana_dashboard_provider.stat.isreg
+    fail_msg: >-
+      The existing Grafana dashboard provider was not found at
+      {{ grafana_dashboard_provisioning_dir }}/provider.yml. Refusing to create
+      an independent provider that could conflict with the UniFi stack.
+
+- name: Ensure EchoDATA Grafana dashboard directory exists
+  ansible.builtin.file:
+    path: "{{ grafana_echodata_dashboard_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Provision EchoDATA Logs dashboard
+  ansible.builtin.template:
+    src: echodata-logs.json.j2
+    dest: "{{ grafana_echodata_logs_dashboard_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "python3 -m json.tool %s"
+  notify: Restart Grafana container
+
+- name: Apply Grafana provisioning restart before verification
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for existing Grafana HTTP API
+  ansible.builtin.uri:
+    url: "http://{{ grafana_bind_address }}:{{ grafana_http_port }}/api/health"
+    method: GET
+    status_code: 200
+    return_content: false
+  register: grafana_ready
+  retries: 20
+  delay: 2
+  until: grafana_ready.status == 200
+  changed_when: false

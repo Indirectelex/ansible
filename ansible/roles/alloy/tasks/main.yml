@@ -1,0 +1,107 @@
+---
+# CHANGE INSTRUCTIONS: preserve config validation before service restart and keep Docker access conditional.
+# TEACHER NOTE — OBSERVABILITY 1B: Grafana Alloy collectors
+# Alloy is installed as the vendor systemd package. Every managed Linux host
+# forwards journald; Docker hosts may additionally tail the local Docker daemon.
+
+- name: Install Alloy repository prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - gpg
+    state: present
+    update_cache: false
+
+- name: Ensure APT keyring directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install Grafana repository signing key
+  ansible.builtin.get_url:
+    url: "{{ alloy_grafana_key_url }}"
+    dest: "{{ alloy_grafana_key_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Configure Grafana stable APT repository
+  ansible.builtin.copy:
+    content: "{{ alloy_grafana_repo }}\n"
+    dest: /etc/apt/sources.list.d/grafana.list
+    owner: root
+    group: root
+    mode: "0644"
+  register: alloy_repo_result
+
+- name: Install Grafana Alloy
+  ansible.builtin.apt:
+    name: alloy
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Grant Alloy access to the system journal
+  ansible.builtin.user:
+    name: alloy
+    groups:
+      - adm
+      - systemd-journal
+    append: true
+  notify: Restart Alloy
+
+- name: Grant Alloy access to Docker when Docker collection is enabled
+  ansible.builtin.user:
+    name: alloy
+    groups:
+      - docker
+    append: true
+  when: alloy_collect_docker_logs | bool
+  notify: Restart Alloy
+
+- name: Disable Alloy anonymous usage reporting
+  ansible.builtin.lineinfile:
+    path: /etc/default/alloy
+    regexp: '^CUSTOM_ARGS='
+    line: 'CUSTOM_ARGS="--disable-reporting"'
+    create: false
+  notify: Restart Alloy
+
+- name: Publish Alloy configuration
+  ansible.builtin.template:
+    src: config.alloy.j2
+    dest: "{{ alloy_config_path }}"
+    owner: root
+    group: alloy
+    mode: "0640"
+  notify: Restart Alloy
+
+- name: Validate Alloy configuration
+  ansible.builtin.command:
+    argv:
+      - alloy
+      - validate
+      - "{{ alloy_config_path }}"
+  changed_when: false
+
+- name: Enable and start Alloy
+  ansible.builtin.service:
+    name: alloy
+    enabled: true
+    state: started
+
+- name: Apply pending Alloy restart before verification
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify Alloy service is active
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - alloy.service
+  register: alloy_service_state
+  changed_when: false
+  failed_when: alloy_service_state.stdout.strip() != 'active'

@@ -1,0 +1,39 @@
+# TEACHER NOTE — OBSERVABILITY 1A LOKI CONFIG
+# CHANGE INSTRUCTIONS: retain TSDB v13/24h schema semantics and test retention changes before deployment.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: "2024-04-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  filesystem:
+    directory: /loki/chunks
+
+compactor:
+  working_directory: /loki/compactor
+  compaction_interval: 10m
+  retention_enabled: true
+  delete_request_store: filesystem
+
+limits_config:
+  retention_period: "{{ (loki_retention_days | int) * 24 }}h"
+
+analytics:
+  reporting_enabled: false

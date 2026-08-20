@@ -1,0 +1,10 @@
+---
+# TEACHER NOTE — OBSERVABILITY 1B DEFAULTS
+# CHANGE INSTRUCTIONS: keep endpoint/source behaviour registry-driven; do not place credentials here.
+alloy_loki_push_url: "http://127.0.0.1:3100/loki/api/v1/push"
+alloy_collect_journal: true
+alloy_collect_docker_logs: false
+alloy_config_path: /etc/alloy/config.alloy
+alloy_grafana_key_url: https://apt.grafana.com/gpg-full.key
+alloy_grafana_key_path: /etc/apt/keyrings/grafana.asc
+alloy_grafana_repo: "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main"
