@@ -16,7 +16,7 @@
     content="width=device-width, initial-scale=1"
   >
   <title>Infrastructure Health &amp; Patch Posture</title>
-  <link rel="stylesheet" href="assets/dashboard.css?v=27">
+  <link rel="stylesheet" href="assets/dashboard.css?v=28">
 </head>
 <body>
   <!-- CHAPTER 13.1 — Global identity, freshness, and manual refresh -->
@@ -63,11 +63,11 @@
     </section>
   </main>
 
-  <!-- CHAPTER 13.3 — Persistent fleet summary plus retractable action log -->
+  <!-- CHAPTER 13.3 — Persistent fleet summary plus retractable event/action drawer -->
   <section
     id="activity-drawer"
     class="activity-drawer"
-    aria-label="Fleet status and activity logs"
+    aria-label="Fleet status, recent infrastructure events, and activity logs"
   >
     <div class="activity-drawer-top">
       <section
@@ -86,7 +86,7 @@
         aria-expanded="false"
         aria-controls="activity-drawer-body"
       >
-        <span>Logs</span>
+        <span>Events</span>
         <svg viewBox="0 0 16 16" aria-hidden="true">
           <path d="m3 10 5-5 5 5"></path>
         </svg>
@@ -94,21 +94,38 @@
     </div>
 
     <div id="activity-drawer-body" class="activity-drawer-body" hidden>
-      <section class="activity-log-panel" aria-label="Dashboard activity log">
-        <header class="activity-log-heading">
-          <strong>Activity log</strong>
-          <span id="activity-log-context">Idle</span>
-        </header>
+      <div class="activity-drawer-grid">
+        <section class="event-history-panel" aria-label="Recent infrastructure events">
+          <header class="activity-log-heading">
+            <strong>Recent events</strong>
+            <span id="event-history-context">Loading…</span>
+          </header>
 
-        <div
-          id="health-check-status"
-          class="run-status"
-          role="status"
-          aria-live="polite"
-        >No dashboard activity yet.</div>
+          <div
+            id="event-history-list"
+            class="event-history-list"
+            aria-live="polite"
+          >
+            <div class="event-history-empty">Loading event history…</div>
+          </div>
+        </section>
 
-        <pre id="activity-log-output" class="activity-log-output">No dashboard command output yet.</pre>
-      </section>
+        <section class="activity-log-panel" aria-label="Dashboard activity log">
+          <header class="activity-log-heading">
+            <strong>Activity log</strong>
+            <span id="activity-log-context">Idle</span>
+          </header>
+
+          <div
+            id="health-check-status"
+            class="run-status"
+            role="status"
+            aria-live="polite"
+          >No dashboard activity yet.</div>
+
+          <pre id="activity-log-output" class="activity-log-output">No dashboard command output yet.</pre>
+        </section>
+      </div>
     </div>
   </section>
 
@@ -133,6 +150,6 @@
   </dialog>
 
   <!-- CHAPTER 13.5 — Application startup; bump version after JS publication -->
-  <script src="assets/dashboard.js?v=30"></script>
+  <script src="assets/dashboard.js?v=31"></script>
 </body>
 </html>

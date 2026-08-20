@@ -35,10 +35,12 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import ssl
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from datetime import datetime, timezone
 from functools import partial
 from http import HTTPStatus
@@ -46,7 +48,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, unquote, urlsplit
+from urllib.parse import parse_qs, urlencode, unquote, urlsplit
 from urllib.request import Request, urlopen
 
 
@@ -62,12 +64,15 @@ PACKAGE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9+.-]*(?::[a-z0-9][a-z0-9-]*)?$")
 LOOPBACK_NAMES = {"127.0.0.1", "localhost", "::1"}
 API_STATUS_PATH = "/api/health-check/status"
 API_UNIFI_SUMMARY_PATH = "/api/unifi/summary"
+API_EVENTS_PATH = "/api/events"
 API_RUN_PREFIX = "/api/health-check/"
 API_SECURITY_UPDATE_PREFIX = "/api/security-update/"
 REQUEST_HEADER = "X-Health-Dashboard"
 MAX_REQUEST_BODY_BYTES = 512
 MAINTENANCE_HISTORY_LIMIT = 10
 MAINTENANCE_OUTPUT_LINES = 160
+EVENT_HISTORY_DEFAULT_LIMIT = 50
+EVENT_HISTORY_MAX_LIMIT = 200
 PROMETHEUS_TIMEOUT_SECONDS = 4
 UNIFI_CONTROLLER_TIMEOUT_SECONDS = 5
 UNIFI_METRICS = (
@@ -253,6 +258,460 @@ def numeric_value(value: Any) -> float:
     except (TypeError, ValueError):
         return 0.0
     return number if number == number and abs(number) != float("inf") else 0.0
+
+
+# ---------------------------------------------------------------------------
+# CHAPTER 11.3 — Persistent event history derived from published reports
+# ---------------------------------------------------------------------------
+# Event history is deliberately outside reports/ so the SQLite database can
+# never be downloaded through the static web root. The database stores only
+# normalized operational state and meaningful transitions; Prometheus remains
+# the time-series store for routine measurements.
+
+EVENT_STATUS_MAP = {
+    "HEALTHY": "OK",
+    "OK": "OK",
+    "WATCH": "WATCH",
+    "WARNING": "WARNING",
+    "CRITICAL": "CRITICAL",
+    "UNREACHABLE": "UNREACHABLE",
+    "UNKNOWN": "UNKNOWN",
+}
+SMART_EVENT_ATTRIBUTES = {
+    "pending_sectors": "Pending sectors",
+    "reallocated_sectors": "Reallocated sectors",
+    "reallocated_events": "Reallocation events",
+    "offline_uncorrectable": "Offline uncorrectable sectors",
+    "reported_uncorrectable": "Reported uncorrectable errors",
+    "interface_crc_errors": "Interface CRC errors",
+}
+
+
+def event_status(value: Any) -> str:
+    """Normalize report/module status into the dashboard health vocabulary."""
+
+    return EVENT_STATUS_MAP.get(str(value or "UNKNOWN").upper(), "UNKNOWN")
+
+
+def event_source_label(source: str) -> str:
+    """Return a compact human label for one event source."""
+
+    labels = {
+        "health": "Host health",
+        "smart": "SMART",
+        "zfs": "ZFS",
+        "proxmox": "Proxmox",
+        "pbs": "PBS",
+        "docker": "Docker",
+    }
+    return labels.get(source, source.replace("_", " ").strip().title())
+
+
+class EventStore:
+    """Persist meaningful report transitions in a private SQLite database."""
+
+    def __init__(self, database_path: Path, reports_dir: Path) -> None:
+        self.database_path = database_path.resolve()
+        self.reports_dir = reports_dir.resolve()
+        self.manifest_path = self.reports_dir / "manifest.json"
+        self.lock = threading.Lock()
+        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.database_path, timeout=5)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    def _initialize(self) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.executescript(
+                """
+                PRAGMA journal_mode=WAL;
+                CREATE TABLE IF NOT EXISTS events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    occurred_at TEXT NOT NULL,
+                    host TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    previous_state TEXT,
+                    current_state TEXT,
+                    fingerprint TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS events_occurred_at_idx
+                    ON events(occurred_at DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS events_host_idx
+                    ON events(host, occurred_at DESC);
+                CREATE TABLE IF NOT EXISTS event_state (
+                    state_key TEXT PRIMARY KEY,
+                    host TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    summary TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS report_cursor (
+                    host TEXT PRIMARY KEY,
+                    generated_at TEXT NOT NULL
+                );
+                """,
+            )
+
+    def _manifest_hosts(self) -> list[str]:
+        try:
+            manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+
+        return sorted(
+            {
+                str(item.get("id", ""))
+                for item in manifest.get("hosts", [])
+                if isinstance(item, dict)
+                and HOST_PATTERN.fullmatch(str(item.get("id", "")))
+            },
+        )
+
+    @staticmethod
+    def _report_signals(report: dict[str, Any]) -> dict[str, dict[str, str]]:
+        host = str(report.get("host", ""))
+        health = event_status(report.get("health_status", report.get("status")))
+        reasons = report.get("health_status_reasons", report.get("status_reasons", []))
+        first_reason = ""
+        if isinstance(reasons, list) and reasons:
+            first = reasons[0]
+            if isinstance(first, dict):
+                first_reason = str(first.get("message") or first.get("summary") or "")
+            else:
+                first_reason = str(first)
+
+        signals: dict[str, dict[str, str]] = {
+            f"{host}:health": {
+                "host": host,
+                "source": "health",
+                "severity": health,
+                "summary": first_reason or f"Host health is {health}",
+            },
+        }
+
+        modules = report.get("module_results", [])
+        if not isinstance(modules, list):
+            return signals
+
+        for module in modules:
+            if not isinstance(module, dict):
+                continue
+            source = str(module.get("check", "")).strip().lower()
+            if not source:
+                continue
+            signals[f"{host}:module:{source}"] = {
+                "host": host,
+                "source": source,
+                "severity": event_status(module.get("status")),
+                "summary": str(module.get("summary") or "No summary provided"),
+            }
+        return signals
+
+    @staticmethod
+    def _smart_counter_events(
+        report: dict[str, Any],
+        observed_at: str,
+    ) -> list[dict[str, str]]:
+        host = str(report.get("host", ""))
+        events: list[dict[str, str]] = []
+        modules = report.get("module_results", [])
+        if not isinstance(modules, list):
+            return events
+
+        smart_module = next(
+            (
+                item
+                for item in modules
+                if isinstance(item, dict)
+                and str(item.get("check", "")).lower() == "smart"
+            ),
+            None,
+        )
+        if not isinstance(smart_module, dict):
+            return events
+
+        devices = smart_module.get("details", {}).get("devices", [])
+        if not isinstance(devices, list):
+            return events
+
+        for device in devices:
+            if not isinstance(device, dict):
+                continue
+            serial = str(device.get("serial") or device.get("device") or "unknown")
+            model = str(device.get("model") or device.get("device") or serial)
+            severity = event_status(device.get("assessment", device.get("status")))
+            attributes = device.get("history", {}).get("attributes", {})
+            if not isinstance(attributes, dict):
+                continue
+
+            for attribute, label in SMART_EVENT_ATTRIBUTES.items():
+                history = attributes.get(attribute)
+                if not isinstance(history, dict):
+                    continue
+                change = history.get("change")
+                if not isinstance(change, (int, float)) or change == 0:
+                    continue
+                previous = history.get("previous")
+                current = history.get("current")
+                events.append(
+                    {
+                        "occurred_at": observed_at,
+                        "host": host,
+                        "source": "smart",
+                        "severity": severity,
+                        "event_type": "metric_change",
+                        "message": (
+                            f"{model} ({serial}): {label} changed "
+                            f"from {previous} to {current}"
+                        ),
+                        "previous_state": str(previous),
+                        "current_state": str(current),
+                        "fingerprint": json.dumps(
+                            [host, "smart", serial, attribute, observed_at, previous, current],
+                            separators=(",", ":"),
+                        ),
+                    },
+                )
+        return events
+
+    @staticmethod
+    def _insert_event(
+        connection: sqlite3.Connection,
+        event: dict[str, str | None],
+    ) -> None:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO events (
+                occurred_at, host, source, severity, event_type, message,
+                previous_state, current_state, fingerprint, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event["occurred_at"],
+                event["host"],
+                event["source"],
+                event["severity"],
+                event["event_type"],
+                event["message"],
+                event.get("previous_state"),
+                event.get("current_state"),
+                event["fingerprint"],
+                utc_now(),
+            ),
+        )
+
+    def sync_reports(self) -> int:
+        """Compare newly published reports with saved state and append events."""
+
+        inserted_before = 0
+        inserted_after = 0
+        with self.lock, closing(self._connect()) as connection, connection:
+            inserted_before = connection.execute(
+                "SELECT COUNT(*) FROM events",
+            ).fetchone()[0]
+            for host in self._manifest_hosts():
+                report_path = self.reports_dir / f"{host}.json"
+                try:
+                    report = json.loads(report_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+
+                if not isinstance(report, dict):
+                    continue
+                report_host = str(report.get("host", host))
+                if report_host != host:
+                    continue
+                generated_at = str(report.get("generated_at") or "").strip()
+                if not generated_at:
+                    continue
+
+                cursor = connection.execute(
+                    "SELECT generated_at FROM report_cursor WHERE host = ?",
+                    (host,),
+                ).fetchone()
+                if cursor is not None and cursor["generated_at"] == generated_at:
+                    continue
+
+                current_signals = self._report_signals(report)
+                existing_rows = connection.execute(
+                    "SELECT * FROM event_state WHERE host = ?",
+                    (host,),
+                ).fetchall()
+                previous_signals = {row["state_key"]: row for row in existing_rows}
+                is_baseline = cursor is None
+
+                for state_key, signal in current_signals.items():
+                    previous = previous_signals.get(state_key)
+                    if not is_baseline:
+                        if previous is None:
+                            label = event_source_label(signal["source"])
+                            self._insert_event(
+                                connection,
+                                {
+                                    "occurred_at": generated_at,
+                                    "host": host,
+                                    "source": signal["source"],
+                                    "severity": signal["severity"],
+                                    "event_type": "monitoring_change",
+                                    "message": (
+                                        f"{label} monitoring became available — "
+                                        f"{signal['summary']}"
+                                    ),
+                                    "previous_state": None,
+                                    "current_state": signal["severity"],
+                                    "fingerprint": json.dumps(
+                                        [host, state_key, generated_at, "available"],
+                                        separators=(",", ":"),
+                                    ),
+                                },
+                            )
+                        elif previous["severity"] != signal["severity"]:
+                            label = event_source_label(signal["source"])
+                            self._insert_event(
+                                connection,
+                                {
+                                    "occurred_at": generated_at,
+                                    "host": host,
+                                    "source": signal["source"],
+                                    "severity": signal["severity"],
+                                    "event_type": "state_change",
+                                    "message": (
+                                        f"{label} changed from {previous['severity']} "
+                                        f"to {signal['severity']} — {signal['summary']}"
+                                    ),
+                                    "previous_state": previous["severity"],
+                                    "current_state": signal["severity"],
+                                    "fingerprint": json.dumps(
+                                        [
+                                            host,
+                                            state_key,
+                                            generated_at,
+                                            previous["severity"],
+                                            signal["severity"],
+                                        ],
+                                        separators=(",", ":"),
+                                    ),
+                                },
+                            )
+
+                    connection.execute(
+                        """
+                        INSERT INTO event_state (
+                            state_key, host, source, observed_at, severity, summary
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(state_key) DO UPDATE SET
+                            observed_at = excluded.observed_at,
+                            severity = excluded.severity,
+                            summary = excluded.summary
+                        """,
+                        (
+                            state_key,
+                            host,
+                            signal["source"],
+                            generated_at,
+                            signal["severity"],
+                            signal["summary"],
+                        ),
+                    )
+
+                if not is_baseline:
+                    current_keys = set(current_signals)
+                    for state_key, previous in previous_signals.items():
+                        if state_key.endswith(":health") or state_key in current_keys:
+                            continue
+                        label = event_source_label(previous["source"])
+                        self._insert_event(
+                            connection,
+                            {
+                                "occurred_at": generated_at,
+                                "host": host,
+                                "source": previous["source"],
+                                "severity": "UNKNOWN",
+                                "event_type": "monitoring_change",
+                                "message": (
+                                    f"{label} monitoring result is missing from "
+                                    "the latest report"
+                                ),
+                                "previous_state": previous["severity"],
+                                "current_state": "UNKNOWN",
+                                "fingerprint": json.dumps(
+                                    [host, state_key, generated_at, "missing"],
+                                    separators=(",", ":"),
+                                ),
+                            },
+                        )
+                        connection.execute(
+                            "DELETE FROM event_state WHERE state_key = ?",
+                            (state_key,),
+                        )
+
+                    for event in self._smart_counter_events(report, generated_at):
+                        self._insert_event(connection, event)
+
+                connection.execute(
+                    """
+                    INSERT INTO report_cursor(host, generated_at)
+                    VALUES (?, ?)
+                    ON CONFLICT(host) DO UPDATE SET generated_at = excluded.generated_at
+                    """,
+                    (host, generated_at),
+                )
+            inserted_after = connection.execute(
+                "SELECT COUNT(*) FROM events",
+            ).fetchone()[0]
+        return max(0, inserted_after - inserted_before)
+
+    def list_events(
+        self,
+        limit: int = EVENT_HISTORY_DEFAULT_LIMIT,
+        host: str | None = None,
+        severity: str | None = None,
+        source: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return newest events with bounded optional filters."""
+
+        limit = max(1, min(int(limit), EVENT_HISTORY_MAX_LIMIT))
+        clauses: list[str] = []
+        parameters: list[Any] = []
+
+        if host:
+            if not HOST_PATTERN.fullmatch(host):
+                return []
+            clauses.append("host = ?")
+            parameters.append(host)
+        if severity:
+            normalized = event_status(severity)
+            clauses.append("severity = ?")
+            parameters.append(normalized)
+        if source:
+            normalized_source = source.strip().lower()
+            if not re.fullmatch(r"[a-z0-9_-]+", normalized_source):
+                return []
+            clauses.append("source = ?")
+            parameters.append(normalized_source)
+
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        parameters.append(limit)
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT id, occurred_at, host, source, severity, event_type,
+                       message, previous_state, current_state
+                FROM events{where}
+                ORDER BY occurred_at DESC, id DESC
+                LIMIT ?
+                """,
+                parameters,
+            ).fetchall()
+        return [dict(row) for row in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -1810,6 +2269,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
     """Serve reports and expose narrowly scoped local action APIs."""
 
     controller: HealthCheckController
+    event_store: EventStore | None = None
     unifi_client: UnifiPrometheusClient | None = None
 
     def send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
@@ -1827,6 +2287,40 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == API_STATUS_PATH:
             self.send_json(HTTPStatus.OK, {"job": self.controller.snapshot()})
+            return
+
+        if path == API_EVENTS_PATH:
+            if self.event_store is None:
+                self.send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": "Event history is not configured."},
+                )
+                return
+            try:
+                self.event_store.sync_reports()
+                query = parse_qs(urlsplit(self.path).query)
+                try:
+                    limit = int(
+                        query.get("limit", [str(EVENT_HISTORY_DEFAULT_LIMIT)])[0]
+                    )
+                except (TypeError, ValueError):
+                    limit = EVENT_HISTORY_DEFAULT_LIMIT
+                events = self.event_store.list_events(
+                    limit=limit,
+                    host=query.get("host", [None])[0],
+                    severity=query.get("severity", [None])[0],
+                    source=query.get("source", [None])[0],
+                )
+            except (OSError, sqlite3.Error) as error:
+                self.send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": f"Event history unavailable: {error}"},
+                )
+                return
+            self.send_json(
+                HTTPStatus.OK,
+                {"events": events, "count": len(events)},
+            )
             return
 
         if path == API_UNIFI_SUMMARY_PATH:
@@ -2008,6 +2502,12 @@ def main() -> None:
 
     controller = HealthCheckController(args.ansible_dir, args.reports_dir)
     DashboardRequestHandler.controller = controller
+    event_store = EventStore(
+        args.ansible_dir / ".state" / "dashboard" / "events.db",
+        args.reports_dir,
+    )
+    event_store.sync_reports()
+    DashboardRequestHandler.event_store = event_store
     unifi_settings = configured_unifi_settings(args.ansible_dir)
     prometheus_url = args.prometheus_url or unifi_settings.get("prometheus_url")
     unifi_controller_url = (
@@ -2046,6 +2546,7 @@ def main() -> None:
     print(
         f"Dashboard: http://{args.bind}:{args.port}\n"
         "Dashboard actions are restricted to manifest hosts on loopback.\n"
+        f"Event history: {event_store.database_path}\n"
         f"UniFi metrics: {prometheus_url or 'disabled'}\n"
         "UniFi device inventory: "
         f"{unifi_controller_url if unifi_controller_client else 'not configured'}",

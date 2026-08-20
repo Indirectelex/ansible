@@ -53,6 +53,7 @@ systemctl --user status hackwell-dashboard.service --no-pager -l
 journalctl --user -u hackwell-dashboard.service -n 100 --no-pager
 curl --fail --silent --show-error http://127.0.0.1:8088/manifest.json >/dev/null
 curl --fail --silent --show-error http://127.0.0.1:8088/api/health-check/status
+curl --fail --silent --show-error 'http://127.0.0.1:8088/api/events?limit=5'
 curl --silent --show-error http://127.0.0.1:8088/api/unifi/summary
 ```
 
@@ -79,5 +80,5 @@ topology, and manifest. Force-refresh the browser after interface changes.
 3. Inspect the service command; it must name `dashboard/server.py`.
 4. Verify `reports/manifest.json` exists.
 5. Verify published interface files exist under `reports/`.
-6. Test the three HTTP boundaries above.
+6. Test the HTTP boundaries above, including `/api/events`.
 7. Inspect the journal before changing files.

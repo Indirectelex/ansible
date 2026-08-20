@@ -83,6 +83,7 @@ file also carries its own `TEACHER NOTE` and `CHANGE INSTRUCTIONS`.
 | `reports/index.html`, `reports/assets/` | Publication play | Copies of `dashboard/` source |
 | `reports/maintenance/` | Custom server | Bounded action evidence |
 | `.state/health_check/` | Patch-state task | Private trusted history |
+| `.state/dashboard/events.db` | Dashboard server | Private SQLite event history and comparison state |
 
 ## Runtime and documentation enforcement
 

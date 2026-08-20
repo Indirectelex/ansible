@@ -30,6 +30,10 @@
 
 const state = {
   reports: [],
+  events: [],
+  eventHistoryAvailable: true,
+  eventHistoryError: "",
+  eventHistoryPollId: null,
   selectedHost: null,
   unifi: null,
   collapsedHosts: new Set(),
@@ -107,6 +111,8 @@ const activityDrawerToggle = document.querySelector(
 const activityDrawerBody = document.querySelector("#activity-drawer-body");
 const activityLogContext = document.querySelector("#activity-log-context");
 const activityLogOutput = document.querySelector("#activity-log-output");
+const eventHistoryContext = document.querySelector("#event-history-context");
+const eventHistoryList = document.querySelector("#event-history-list");
 
 // ---------------------------------------------------------------------------
 // CHAPTER 13.2 — Defensive formatting and status normalization
@@ -684,6 +690,112 @@ function renderHealthCheckStatus() {
   if (["running", "failed"].includes(job.state)) {
     setActivityDrawerOpen(true);
   }
+}
+
+// ---------------------------------------------------------------------------
+// CHAPTER 13.3A — Persistent infrastructure event history
+// ---------------------------------------------------------------------------
+// The server derives events from report transitions and SMART counter deltas.
+// The browser only renders that normalized history; it never invents alerts
+// from raw measurements.
+
+function eventSourceLabel(value) {
+  const source = String(value || "unknown").toLowerCase();
+  const labels = {
+    health: "Host health",
+    smart: "SMART",
+    zfs: "ZFS",
+    proxmox: "Proxmox",
+    pbs: "PBS",
+    docker: "Docker",
+  };
+  return labels[source] || source.replaceAll("_", " ");
+}
+
+function renderEventHistory() {
+  if (!eventHistoryContext || !eventHistoryList) {
+    return;
+  }
+
+  if (!state.eventHistoryAvailable) {
+    eventHistoryContext.textContent = "Unavailable";
+    eventHistoryList.innerHTML = `
+      <div class="event-history-empty">
+        Event history requires dashboard/server.py.
+        ${state.eventHistoryError ? `<small>${escapeHtml(state.eventHistoryError)}</small>` : ""}
+      </div>
+    `;
+    return;
+  }
+
+  eventHistoryContext.textContent = state.events.length === 1
+    ? "1 recent event"
+    : `${state.events.length} recent events`;
+
+  if (state.events.length === 0) {
+    eventHistoryList.innerHTML = `
+      <div class="event-history-empty">
+        No changes recorded yet. Current reports are the event-history baseline.
+      </div>
+    `;
+    return;
+  }
+
+  eventHistoryList.innerHTML = state.events.map((event) => {
+    const severity = healthStatusName(event.severity);
+    const previous = event.previous_state
+      ? `${event.previous_state} → ${event.current_state || severity}`
+      : severity;
+
+    return `
+      <article class="event-history-row">
+        <span
+          class="status-dot ${healthStatusClass(severity)}"
+          aria-label="${escapeHtml(severity)}"
+        ></span>
+        <div class="event-history-content">
+          <div class="event-history-meta">
+            <strong>${escapeHtml(event.host || "Unknown host")}</strong>
+            <span>${escapeHtml(eventSourceLabel(event.source))}</span>
+            <span>${escapeHtml(previous)}</span>
+            <time
+              datetime="${escapeHtml(event.occurred_at || "")}"
+              title="${escapeHtml(formatDate(event.occurred_at))}"
+            >${escapeHtml(formatAge(event.occurred_at))}</time>
+          </div>
+          <p>${escapeHtml(event.message || "Infrastructure state changed.")}</p>
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+async function loadEventHistory() {
+  try {
+    const response = await fetch("api/events?limit=50", {cache: "no-store"});
+    const payload = await responsePayload(response);
+    if (!response.ok || !Array.isArray(payload.events)) {
+      throw new Error(payload.error || `Event API returned HTTP ${response.status}.`);
+    }
+    return {available: true, error: "", events: payload.events};
+  } catch (error) {
+    return {available: false, error: error.message, events: []};
+  }
+}
+
+async function refreshEventHistory() {
+  const history = await loadEventHistory();
+  state.eventHistoryAvailable = history.available;
+  state.eventHistoryError = history.error;
+  state.events = history.events;
+  renderEventHistory();
+}
+
+function startEventHistoryPolling() {
+  if (state.eventHistoryPollId !== null) {
+    window.clearInterval(state.eventHistoryPollId);
+  }
+  state.eventHistoryPollId = window.setInterval(refreshEventHistory, 30000);
 }
 
 // ---------------------------------------------------------------------------
@@ -3087,11 +3199,12 @@ async function loadDashboard() {
     '<div class="empty-state">Loading fleet summary…</div>';
 
   try {
-    const [response, topology, storageTopology, unifi] = await Promise.all([
+    const [response, topology, storageTopology, unifi, eventHistory] = await Promise.all([
       fetch("manifest.json", {cache: "no-store"}),
       loadTopology(),
       loadStorageTopology(),
       loadUnifiSummary(),
+      loadEventHistory(),
     ]);
 
     if (!response.ok) {
@@ -3102,6 +3215,9 @@ async function loadDashboard() {
     state.topology = topology;
     state.storageTopology = storageTopology;
     state.unifi = unifi;
+    state.eventHistoryAvailable = eventHistory.available;
+    state.eventHistoryError = eventHistory.error;
+    state.events = eventHistory.events;
     state.reports = await Promise.all(
       (manifest.hosts || []).map(loadReport),
     );
@@ -3113,6 +3229,7 @@ async function loadDashboard() {
       `Updated ${formatDate(manifest.generated_at)}`;
 
     renderFleetSummary(state.reports);
+    renderEventHistory();
     renderFleet();
   } catch (error) {
     meta.textContent = "Dashboard unavailable";
@@ -3336,6 +3453,7 @@ async function startSecurityUpdate(host) {
 async function initializeDashboard() {
   await loadDashboard();
   await refreshHealthCheckStatus(true);
+  startEventHistoryPolling();
 }
 
 document

@@ -89,6 +89,22 @@ class DashboardLayoutTests(unittest.TestCase):
         self.assertIn('outputLines.join("\\n")', javascript)
         self.assertIn('["running", "failed"].includes(job.state)', javascript)
 
+
+    def test_event_history_lives_beside_the_existing_activity_log(self) -> None:
+        html = (ROOT / "dashboard/index.html").read_text()
+        javascript = (ROOT / "dashboard/assets/dashboard.js").read_text()
+        stylesheet = (ROOT / "dashboard/assets/dashboard.css").read_text()
+        server = (ROOT / "dashboard/server.py").read_text()
+
+        self.assertIn('id="event-history-list"', html)
+        self.assertIn('id="event-history-context"', html)
+        self.assertIn("function renderEventHistory", javascript)
+        self.assertIn('fetch("api/events?limit=50"', javascript)
+        self.assertIn("startEventHistoryPolling", javascript)
+        self.assertIn(".event-history-row", stylesheet)
+        self.assertIn('API_EVENTS_PATH = "/api/events"', server)
+        self.assertIn('".state" / "dashboard" / "events.db"', server)
+
     def test_smart_status_badges_explain_why_states_differ(self) -> None:
         javascript = (ROOT / "dashboard/assets/dashboard.js").read_text()
         stylesheet = (ROOT / "dashboard/assets/dashboard.css").read_text()

@@ -49,6 +49,7 @@ own; it trusts the manifest as the allowed and displayed host set.
 - reads the manifest as an action allowlist;
 - runs one fixed Ansible action at a time;
 - stores bounded maintenance history;
+- derives persistent infrastructure events into private SQLite state;
 - queries fixed Prometheus expressions;
 - optionally merges the authoritative UniFi adopted-device roster;
 - rejects non-loopback action requests.
@@ -231,6 +232,7 @@ The custom server combines static publication with narrow local APIs:
 | `/` and static paths | GET | Published dashboard and reports |
 | `/api/health-check/status` | GET | Current background action state |
 | `/api/unifi/summary` | GET | Bounded network summary |
+| `/api/events` | GET | Recent normalized infrastructure event history |
 | `/api/health-check/<host>` | POST | Run one allowed host health check |
 | `/api/security-update/<host>` | POST | Run one explicitly confirmed security update |
 
@@ -266,12 +268,14 @@ The browser starts by loading, in parallel:
 - `manifest.json`;
 - `assets/dashboard-topology.json`;
 - `storage-topology.json`;
-- `/api/unifi/summary`.
+- `/api/unifi/summary`;
+- `/api/events`.
 
-It then loads each host report and maintenance history. The state object is the
-single in-browser model. Render functions convert that state to HTML; event
-delegation converts clicks into selections, collapses, dialogs, or validated
-API calls.
+It then loads each host report and maintenance history. The event API is polled
+independently so newly published state changes appear in the retractable drawer
+without turning routine metrics into alerts. The state object is the single
+in-browser model. Render functions convert that state to HTML; event delegation
+converts clicks into selections, collapses, dialogs, or validated API calls.
 
 The Network node is conditional on a valid UniFi summary. Its absence should
 be treated as integration degradation, not as proof the network is healthy.
@@ -303,7 +307,10 @@ repository and pass the reports directory. User lingering allows it to start
 without an interactive login. See `docs/RUNTIME-OPERATIONS.md`.
 
 A service being `active` proves only that a process exists. Functional checks
-must also verify the manifest, action status, and UniFi endpoint.
+must also verify the manifest, action status, event-history endpoint, and UniFi
+endpoint. Event state lives in `.state/dashboard/events.db`, outside the browser
+web root. The first observation establishes a quiet baseline; later report
+versions create state-change and selected SMART counter events.
 
 ## Chapter 16 — Extending the system
 

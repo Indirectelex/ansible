@@ -470,6 +470,114 @@ class DashboardServerTests(unittest.TestCase):
             [device["name"] for device in summary["devices"]],
         )
 
+
+    def test_event_history_uses_current_reports_as_a_quiet_baseline(self) -> None:
+        store = dashboard_server.EventStore(
+            self.ansible_dir / ".state" / "dashboard" / "events.db",
+            self.reports_dir,
+        )
+
+        store.sync_reports()
+
+        self.assertEqual(store.list_events(), [])
+        self.assertTrue(store.database_path.is_file())
+        self.assertFalse(store.database_path.is_relative_to(self.reports_dir))
+
+    def test_event_history_records_state_and_smart_counter_changes_once(self) -> None:
+        store = dashboard_server.EventStore(
+            self.ansible_dir / ".state" / "dashboard" / "events.db",
+            self.reports_dir,
+        )
+        store.sync_reports()
+
+        report = json.loads(
+            (self.reports_dir / "nimbus.json").read_text(encoding="utf-8"),
+        )
+        report.update(
+            {
+                "generated_at": "2026-08-11T21:00:00-04:00",
+                "health_status": "WARNING",
+                "health_status_reasons": ["Storage needs attention"],
+                "module_results": [
+                    {
+                        "check": "smart",
+                        "status": "watch",
+                        "summary": "1 device under watch",
+                        "details": {
+                            "devices": [
+                                {
+                                    "device": "/dev/sda",
+                                    "model": "Example SSD",
+                                    "serial": "SERIAL-1",
+                                    "assessment": "watch",
+                                    "history": {
+                                        "attributes": {
+                                            "pending_sectors": {
+                                                "previous": 13,
+                                                "current": 15,
+                                                "change": 2,
+                                            },
+                                        },
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                ],
+            },
+        )
+        (self.reports_dir / "nimbus.json").write_text(
+            json.dumps(report),
+            encoding="utf-8",
+        )
+
+        store.sync_reports()
+        first_events = store.list_events()
+        store.sync_reports()
+        second_events = store.list_events()
+
+        self.assertEqual(first_events, second_events)
+        self.assertTrue(
+            any(
+                event["event_type"] == "state_change"
+                and event["source"] == "health"
+                and event["previous_state"] == "OK"
+                and event["current_state"] == "WARNING"
+                for event in first_events
+            ),
+        )
+        self.assertTrue(
+            any(
+                event["event_type"] == "monitoring_change"
+                and event["source"] == "smart"
+                and event["current_state"] == "WATCH"
+                for event in first_events
+            ),
+        )
+        smart_event = next(
+            event
+            for event in first_events
+            if event["event_type"] == "metric_change"
+        )
+        self.assertEqual(smart_event["source"], "smart")
+        self.assertEqual(smart_event["previous_state"], "13")
+        self.assertEqual(smart_event["current_state"], "15")
+        self.assertIn("Pending sectors changed from 13 to 15", smart_event["message"])
+
+    def test_event_history_filters_are_bounded_and_validated(self) -> None:
+        store = dashboard_server.EventStore(
+            self.ansible_dir / ".state" / "dashboard" / "events.db",
+            self.reports_dir,
+        )
+        store.sync_reports()
+
+        self.assertEqual(store.list_events(host="bad/host"), [])
+        self.assertEqual(store.list_events(source="bad source"), [])
+        self.assertEqual(
+            dashboard_server.event_status("healthy"),
+            "OK",
+        )
+
     def test_only_manifest_hosts_are_allowed(self) -> None:
         controller = dashboard_server.HealthCheckController(
             self.ansible_dir,
